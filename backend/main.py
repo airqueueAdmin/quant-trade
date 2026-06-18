@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from pydantic import BaseModel
 from data_provider import get_stock_data
 from strategies.moving_average import moving_average_cross_strategy
@@ -36,6 +36,11 @@ def run_backtest(strategy_func, data, initial_capital, **kwargs):
         "portfolio_history": portfolio.reset_index().to_dict('records'),
         "trades": trades
     }
+
+# [수정] UptimeRobot의 HEAD 요청을 정상적으로 처리하기 위한 엔드포인트
+@app.head("/")
+async def head_root():
+    return Response(status_code=200)
 
 @app.get("/")
 def read_root():
