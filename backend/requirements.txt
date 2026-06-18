@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+yfinance
+numpy
+pandas
+gnews
+google-generativeai
+python-dotenv
