@@ -1,39 +1,54 @@
 import os
-from gnews import GNews
-import google.generativeai as genai
+import requests
 from dotenv import load_dotenv
+import google.generativeai as genai
 import json
 
 load_dotenv()
 
+# --- API Key Configuration ---
 try:
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
+    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+    NEWS_API_KEY = os.getenv("NEWS_API_KEY")
+    if not GEMINI_API_KEY:
         raise ValueError("GEMINI_API_KEY가 .env 파일에 설정되지 않았습니다.")
-    genai.configure(api_key=api_key)
+    if not NEWS_API_KEY:
+        raise ValueError("NEWS_API_KEY가 .env 파일에 설정되지 않았습니다.")
+
+    genai.configure(api_key=GEMINI_API_KEY)
     model = genai.GenerativeModel('gemini-1.0-pro')
 except Exception as e:
-    print(f"Gemini API 설정 중 오류 발생: {e}")
+    print(f"API 설정 중 오류 발생: {e}")
     model = None
 
-def get_news(ticker: str, country: str = 'US', period: str = '7d', max_results: int = 10):
+def get_news(ticker: str, language: str = 'en', page_size: int = 10):
     """
-    GNews를 사용하여 특정 종목에 대한 최신 뉴스를 가져옵니다.
-    [수정] 클라우드 환경에서의 작동 안정성을 위해 디버깅 로그를 강화합니다.
+    [수정] NewsAPI를 사용하여 특정 종목에 대한 최신 뉴스를 가져옵니다.
     """
-    print(f"Attempting to fetch news for {ticker}...")
+    print(f"Attempting to fetch news for {ticker} from NewsAPI...")
+    url = (
+        'https://newsapi.org/v2/everything?'
+        f'q={ticker}&'
+        f'language={language}&'
+        'sortBy=publishedAt&'
+        f'pageSize={page_size}&'
+        f'apiKey={NEWS_API_KEY}'
+    )
     try:
-        google_news = GNews(language='en', country=country, period=period, max_results=max_results)
-        news = google_news.get_news(f'{ticker} stock')
+        response = requests.get(url)
+        response.raise_for_status()
+        data = response.json()
+        articles = data.get("articles", [])
 
-        if not news:
-            print("GNews returned an empty list. This might be due to network restrictions on Render.")
+        if not articles:
+            print("NewsAPI returned an empty list.")
         else:
-            print(f"Successfully fetched {len(news)} articles.")
+            print(f"Successfully fetched {len(articles)} articles from NewsAPI.")
 
-        return news
-    except Exception as e:
-        print(f"An error occurred while fetching news with GNews: {e}")
+        # Gemini 분석에 필요한 정보만 추출하여 반환
+        return [{"title": a["title"], "url": a["url"]} for a in articles]
+    except requests.exceptions.RequestException as e:
+        print(f"An error occurred while fetching news from NewsAPI: {e}")
         return []
 
 def analyze_sentiment_with_gemini(articles: list):
@@ -41,10 +56,10 @@ def analyze_sentiment_with_gemini(articles: list):
     Gemini API를 사용하여 뉴스 기사 목록의 시장 감성을 분석합니다.
     """
     if not model:
-        raise ConnectionError("Gemini API가 올바르게 설정되지 않았습니다. API 키를 확인하세요.")
+        raise ConnectionError("Gemini API가 올바르게 설정되지 않았습니다.")
 
     if not articles:
-        return {"sentiment_score": 50, "summary": "분석할 뉴스를 찾을 수 없습니다. (클라우드 환경의 네트워크 제한일 수 있습니다.)", "articles": []}
+        return {"sentiment_score": 50, "summary": "분석할 뉴스를 찾을 수 없습니다.", "articles": []}
 
     prompt_articles = "\n".join([f"- {article['title']}" for article in articles])
     prompt = f"""
@@ -62,15 +77,12 @@ def analyze_sentiment_with_gemini(articles: list):
           "summary": "애플이 새로운 AI 기능을 발표하며 주가가 상승했으며, 차세대 아이폰에 대한 기대감이 커지고 있습니다."
         }}
     """
-
     try:
         response = model.generate_content(prompt)
         json_text = response.text.strip().replace('```json', '').replace('```', '').strip()
-
         result = json.loads(json_text)
         result['articles'] = articles
         return result
-
     except Exception as e:
         print(f"Gemini 감성 분석 중 오류 발생: {e}")
         return {
