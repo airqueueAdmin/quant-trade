@@ -19,10 +19,22 @@ except Exception as e:
 def get_news(ticker: str, country: str = 'US', period: str = '7d', max_results: int = 10):
     """
     GNews를 사용하여 특정 종목에 대한 최신 뉴스를 가져옵니다.
+    [수정] 클라우드 환경에서의 작동 안정성을 위해 디버깅 로그를 강화합니다.
     """
-    google_news = GNews(language='en', country=country, period=period, max_results=max_results)
-    news = google_news.get_news(f'{ticker} stock')
-    return news
+    print(f"Attempting to fetch news for {ticker}...")
+    try:
+        google_news = GNews(language='en', country=country, period=period, max_results=max_results)
+        news = google_news.get_news(f'{ticker} stock')
+
+        if not news:
+            print("GNews returned an empty list. This might be due to network restrictions on Render.")
+        else:
+            print(f"Successfully fetched {len(news)} articles.")
+
+        return news
+    except Exception as e:
+        print(f"An error occurred while fetching news with GNews: {e}")
+        return []
 
 def analyze_sentiment_with_gemini(articles: list):
     """
@@ -32,7 +44,7 @@ def analyze_sentiment_with_gemini(articles: list):
         raise ConnectionError("Gemini API가 올바르게 설정되지 않았습니다. API 키를 확인하세요.")
 
     if not articles:
-        return {"sentiment_score": 50, "summary": "분석할 뉴스가 없습니다.", "articles": []}
+        return {"sentiment_score": 50, "summary": "분석할 뉴스를 찾을 수 없습니다. (클라우드 환경의 네트워크 제한일 수 있습니다.)", "articles": []}
 
     prompt_articles = "\n".join([f"- {article['title']}" for article in articles])
     prompt = f"""
