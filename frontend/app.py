@@ -8,7 +8,7 @@ import os
 # 환경 변수에서 백엔드 URL을 읽어오고, 없을 경우 로컬 주소를 기본값으로 사용합니다.
 BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000")
 
-st.set_page_config(layout="wide", page_title="Quant Backtester")
+st.set_page_config(layout="wide", page_title="나만의 투자 전략 시뮬레이터")
 
 st.title("나만의 투자 전략 시뮬레이터")
 with st.expander("🤔 이 앱은 무엇인가요?"):
@@ -59,7 +59,7 @@ st.sidebar.header("📈 투자 전략 백테스트")
 ticker_backtest = st.sidebar.text_input("주식 티커 (백테스트용)", "AAPL", help="백테스트를 실행할 주식의 티커를 입력하세요.")
 start_date = st.sidebar.date_input("시작일", pd.to_datetime("2023-01-01"))
 end_date = st.sidebar.date_input("종료일", pd.to_datetime("2023-12-31"))
-initial_capital = st.sidebar.number_input("초기 투자금 ($)", 1000, 1000000, 100000, help="시뮬레이션을 시작할 가상의 투자 원금입니다.")
+initial_capital = st.sidebar.number_input("초기 투자금 ($)", 1000, 10000000, 100000, format="%d", help="시뮬레이션을 시작할 가상의 투자 원금입니다.")
 strategy = st.sidebar.selectbox("전략 선택", ["이동평균", "RSI", "볼린저 밴드"])
 
 params = {}
@@ -109,8 +109,18 @@ if st.sidebar.button("백테스트 실행"):
                 st.plotly_chart(fig, use_container_width=True)
 
             st.subheader("📋 상세 거래 내역")
+            with st.expander("시뮬레이션은 어떻게 작동하나요? (거래 기준)"):
+                st.info("""
+                    - **거래 타이밍:** 모든 거래는 투자 전략에 따라 **매수 또는 매도 신호가 발생한 날의 다음 날 아침(시가)**에 이루어집니다.
+                    - **거래 가격:** 거래는 **다음 날의 시가(Open Price)**를 기준으로 체결됩니다.
+                    - **거래 수량:**
+                        - **매수 시:** 현재 보유한 현금을 모두 사용하여 살 수 있는 최대 수량의 주식을 매수합니다. (All-in)
+                        - **매도 시:** 보유하고 있는 모든 주식을 매도합니다. (All-out)
+                    - **수수료:** 모든 거래에는 0.1%의 수수료가 적용됩니다.
+                """)
             trades_df = pd.DataFrame(results.get("trades", []))
             if not trades_df.empty:
+                trades_df['Date'] = pd.to_datetime(trades_df['Date']).dt.strftime('%Y-%m-%d %H:%M:%S')
                 st.dataframe(trades_df, use_container_width=True)
 
         except requests.exceptions.RequestException as e:
