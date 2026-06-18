@@ -16,7 +16,7 @@ try:
         raise ValueError("NEWS_API_KEY가 .env 파일에 설정되지 않았습니다.")
 
     genai.configure(api_key=GEMINI_API_KEY)
-    model = genai.GenerativeModel('gemini-1.0-pro')
+    model = genai.GenerativeModel('gemini-2.5-flash')
 except Exception as e:
     print(f"API 설정 중 오류 발생: {e}")
     model = None
