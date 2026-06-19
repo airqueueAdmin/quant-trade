@@ -1,7 +1,8 @@
 from fastapi import FastAPI, Response, HTTPException
 from pydantic import BaseModel, Field
-from typing import Dict, Any, List
-import numpy as np # numpy 임포트 추가
+from typing import Dict, Any, List # Optional 제거
+
+import numpy as np
 
 from data_provider import get_stock_data
 from strategies.moving_average import moving_average_cross_strategy
@@ -32,13 +33,12 @@ class BollingerBandsRequest(BacktestRequestBase):
     window: int = 20
     num_std_dev: int = 2
 
-# --- Optimization Request Models ---
 class OptimizationRequestBase(BaseModel):
     ticker: str
     start_date: str
     end_date: str
     initial_capital: float = 100000.0
-    metric_to_optimize: str = "sharpe_ratio" # 최적화 기준 지표
+    metric_to_optimize: str = "sharpe_ratio"
 
 class MovingAverageOptimizeRequest(OptimizationRequestBase):
     short_window_range: List[int] = Field(..., min_length=3, max_length=3, description="[start, end, step] for short_window")
@@ -72,9 +72,9 @@ def read_root():
     return {"message": "Welcome to the Quant Trading API"}
 
 @app.get("/sentiment/{ticker}")
-def get_sentiment(ticker: str):
+def get_sentiment(ticker: str): # model_name 파라미터 제거
     articles = gemini_analyzer.get_news(ticker)
-    sentiment_result = gemini_analyzer.analyze_sentiment_with_gemini(articles)
+    sentiment_result = gemini_analyzer.analyze_sentiment_with_gemini(articles) # model_name 전달하지 않음
     return sentiment_result
 
 @app.post("/backtest/moving_average")
@@ -120,7 +120,6 @@ def run_bollinger_bands_backtest(request: BollingerBandsRequest):
         num_std_dev=request.num_std_dev
     )
 
-# --- Optimization Endpoints ---
 @app.post("/optimize/moving_average")
 def optimize_moving_average(request: MovingAverageOptimizeRequest):
     data = get_stock_data(request.ticker, request.start_date, request.end_date)
@@ -168,9 +167,7 @@ def optimize_bollinger_bands(request: BollingerBandsOptimizeRequest):
     if data.empty:
         raise HTTPException(status_code=404, detail="No data found for the given ticker and date range.")
 
-    # num_std_dev는 float일 수 있으므로 np.arange 사용
     num_std_dev_values = np.arange(request.num_std_dev_range[0], request.num_std_dev_range[1] + request.num_std_dev_range[2], request.num_std_dev_range[2]).tolist()
-    # 부동소수점 오차로 인한 문제 방지를 위해 소수점 둘째 자리까지 반올림
     num_std_dev_values = [round(x, 2) for x in num_std_dev_values]
 
     param_grid = {

@@ -16,10 +16,15 @@ st.write("AI가 분석할 주식의 티커를 입력하세요.")
 
 with st.form("ai_analysis_form"):
     ticker_sentiment = st.text_input("주식 티커 (종목 코드)", "AAPL", help="분석하고 싶은 주식의 티커를 입력하세요. (예: AAPL, GOOGL, MSFT)")
+
+    # Gemini 모델 선택 드롭다운 제거
+    # gemini_model_name = st.selectbox(...)
+
     submitted_step1_ai = st.form_submit_button("AI 분석 실행")
 
 if submitted_step1_ai:
     st.session_state['ticker_sentiment'] = ticker_sentiment
+    # st.session_state['gemini_model_name'] = gemini_model_name # 선택된 모델 이름 저장 제거
     st.session_state['step_ai'] = 2 # 다음 단계로 이동
 
 if 'step_ai' not in st.session_state:
@@ -31,7 +36,10 @@ if st.session_state['step_ai'] >= 2:
 
     with st.spinner('최신 뉴스를 수집하고 AI로 분석 중입니다... (최대 1분 소요)'):
         try:
-            response = requests.get(f"{BACKEND_URL}/sentiment/{st.session_state['ticker_sentiment']}")
+            # model_name 쿼리 파라미터 전달 제거
+            response = requests.get(
+                f"{BACKEND_URL}/sentiment/{st.session_state['ticker_sentiment']}"
+            )
             response.raise_for_status()
             sentiment_results = response.json()
 

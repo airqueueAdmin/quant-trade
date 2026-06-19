@@ -45,9 +45,9 @@ if st.session_state['step'] >= 2:
     if mode == "전략 최적화":
         metric_to_optimize = st.selectbox("최적화 기준 지표", ["sharpe_ratio", "total_return_pct"], format_func=lambda x: "샤프 지수" if x == "sharpe_ratio" else "총수익률")
 
-    with st.form("strategy_settings_form"): # key 인자 제거
-        strategy = st.selectbox("전략 선택", ["이동평균", "RSI", "볼린저 밴드"])
+    strategy = st.selectbox("전략 선택", ["이동평균", "RSI", "볼린저 밴드"])
 
+    with st.form("strategy_settings_form"): # key 인자 제거
         params = {}
         endpoint = ""
         optimize_endpoint = ""
