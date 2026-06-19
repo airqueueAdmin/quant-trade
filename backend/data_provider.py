@@ -1,10 +1,12 @@
 import yfinance as yf
 import pandas as pd
+from functools import lru_cache
 
+@lru_cache(maxsize=128) # 최대 128개의 결과를 메모리에 저장
 def get_stock_data(ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
     """
     yfinance로부터 주식 데이터를 가져옵니다.
-    MultiIndex 컬럼 문제를 해결하고, 항상 단순 DataFrame을 반환하도록 보장합니다.
+    [성능 개선] LRU 캐시를 적용하여 반복적인 API 호출을 방지합니다.
     """
     raw_data = yf.download(
         ticker,

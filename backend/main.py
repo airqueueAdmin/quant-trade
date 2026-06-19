@@ -1,8 +1,8 @@
 from fastapi import FastAPI, Response, HTTPException
 from pydantic import BaseModel, Field
-from typing import Dict, Any, List # Optional 제거
-
+from typing import Dict, Any, List, Optional
 import numpy as np
+import json # json 임포트 추가
 
 from data_provider import get_stock_data
 from strategies.moving_average import moving_average_cross_strategy
@@ -72,10 +72,10 @@ def read_root():
     return {"message": "Welcome to the Quant Trading API"}
 
 @app.get("/sentiment/{ticker}")
-def get_sentiment(ticker: str): # model_name 파라미터 제거
+def get_sentiment(ticker: str):
     articles = gemini_analyzer.get_news(ticker)
-    sentiment_result = gemini_analyzer.analyze_sentiment_with_gemini(articles) # model_name 전달하지 않음
-    return sentiment_result
+    sentiment_result_str = gemini_analyzer.analyze_sentiment_with_gemini(articles)
+    return json.loads(sentiment_result_str) # JSON 문자열을 객체로 변환하여 반환
 
 @app.post("/backtest/moving_average")
 def run_moving_average_backtest(request: MovingAverageRequest):
