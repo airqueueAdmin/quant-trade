@@ -21,8 +21,22 @@ try:
 except Exception as e:
     print(f"Gemini API 구성 중 오류 발생: {e}")
 
-# [수정] 현재 가장 안정적이고 보편적으로 사용 가능한 모델 목록으로 변경
-PREFERRED_GEMINI_MODELS = ['gemini-pro', 'gemini-1.5-flash-latest']
+@lru_cache(maxsize=1) # 사용 가능한 모델 목록은 한 번만 조회하면 되므로 캐시 크기를 1로 설정
+def get_available_generative_model():
+    """
+    [자가 진단] 현재 API 키로 사용 가능한 'generateContent' 지원 모델 중 첫 번째 모델을 찾아 반환합니다.
+    """
+    if not GEMINI_API_KEY:
+        return None, "Gemini API 키가 설정되지 않았습니다."
+
+    try:
+        for m in genai.list_models():
+            if 'generateContent' in m.supported_generation_methods:
+                print(f"✅ 사용 가능한 모델 찾음: {m.name}")
+                return m.name, None
+        return None, "사용 가능한 'generateContent' 지원 모델을 찾을 수 없습니다."
+    except Exception as e:
+        return None, f"모델 목록 조회 중 오류 발생: {e}"
 
 @lru_cache(maxsize=32)
 def get_news(ticker: str, language: str = 'en', page_size: int = 10):
@@ -31,8 +45,7 @@ def get_news(ticker: str, language: str = 'en', page_size: int = 10):
     """
     if not NEWS_API_KEY:
         return tuple()
-
-    print(f"Attempting to fetch news for {ticker} from NewsAPI...")
+    # ... (이하 get_news 함수 내용은 이전과 동일)
     url = (
         'https://newsapi.org/v2/everything?'
         f'q={ticker}&'
@@ -46,21 +59,14 @@ def get_news(ticker: str, language: str = 'en', page_size: int = 10):
         response.raise_for_status()
         data = response.json()
         articles = data.get("articles", [])
-
-        if not articles:
-            print("NewsAPI returned an empty list.")
-        else:
-            print(f"Successfully fetched {len(articles)} articles from NewsAPI.")
-
         return tuple({"title": a["title"], "url": a["url"]} for a in articles)
-    except requests.exceptions.RequestException as e:
-        print(f"An error occurred while fetching news from NewsAPI: {e}")
+    except requests.exceptions.RequestException:
         return tuple()
 
 @lru_cache(maxsize=32)
 def analyze_sentiment_with_gemini(articles_json: str):
     """
-    Gemini API를 사용하여 감성 분석을 수행하고, 결과를 캐싱합니다.
+    [최종 수정] 시스템이 자동으로 찾은 모델을 사용하여 감성 분석을 수행합니다.
     """
     articles = json.loads(articles_json)
 
@@ -69,6 +75,10 @@ def analyze_sentiment_with_gemini(articles_json: str):
 
     if not articles:
         return json.dumps({"sentiment_score": 50, "summary": "분석할 뉴스를 찾을 수 없습니다.", "articles": []})
+
+    model_name, error_msg = get_available_generative_model()
+    if error_msg:
+        return json.dumps({"sentiment_score": 50, "summary": f"AI 모델 로딩 실패: {error_msg}", "articles": articles})
 
     prompt_articles = "\n".join([f"- {article['title']}" for article in articles])
     prompt = f"""
@@ -79,35 +89,19 @@ def analyze_sentiment_with_gemini(articles_json: str):
 
         News Headlines:
         {prompt_articles}
-
-        Example JSON output:
-        {{
-          "sentiment_score": 75,
-          "summary": "애플이 새로운 AI 기능을 발표하며 주가가 상승했으며, 차세대 아이폰에 대한 기대감이 커지고 있습니다."
-        }}
     """
 
-    last_error = None
-    for model_name in PREFERRED_GEMINI_MODELS:
-        try:
-            print(f"Trying Gemini model: {model_name}")
-            model_instance = genai.GenerativeModel(model_name)
-            response = model_instance.generate_content(prompt)
-            json_text = response.text.strip().replace('```json', '').replace('```', '').strip()
+    try:
+        model_instance = genai.GenerativeModel(model_name)
+        response = model_instance.generate_content(prompt)
+        json_text = response.text.strip().replace('```json', '').replace('```', '').strip()
 
-            result = json.loads(json_text)
-            result['articles'] = articles
-            print(f"Successfully used Gemini model: {model_name}")
-            return json.dumps(result)
-        except Exception as e:
-            last_error = e
-            print(f"Gemini 모델 '{model_name}' 사용 중 오류 발생: {e}. 다음 모델을 시도합니다.")
-            continue
-
-    print(f"모든 Gemini 모델 시도 실패. 마지막 오류: {last_error}")
-    result = {
-        "sentiment_score": 50,
-        "summary": f"모든 Gemini 모델 시도 실패. 마지막 오류: {last_error}",
-        "articles": articles
-    }
-    return json.dumps(result)
+        result = json.loads(json_text)
+        result['articles'] = articles
+        return json.dumps(result)
+    except Exception as e:
+        return json.dumps({
+            "sentiment_score": 50,
+            "summary": f"감성 분석 중 오류가 발생했습니다: {e}",
+            "articles": articles
+        })
