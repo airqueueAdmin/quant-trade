@@ -21,7 +21,8 @@ try:
 except Exception as e:
     print(f"Gemini API 구성 중 오류 발생: {e}")
 
-PREFERRED_GEMINI_MODELS = ['gemini-1.5-flash-latest', 'gemini-1.0-pro']
+# [수정] 현재 가장 안정적이고 보편적으로 사용 가능한 모델 목록으로 변경
+PREFERRED_GEMINI_MODELS = ['gemini-pro', 'gemini-1.5-flash-latest']
 
 @lru_cache(maxsize=32)
 def get_news(ticker: str, language: str = 'en', page_size: int = 10):
@@ -57,12 +58,11 @@ def get_news(ticker: str, language: str = 'en', page_size: int = 10):
         return tuple()
 
 @lru_cache(maxsize=32)
-def analyze_sentiment_with_gemini(articles_json: str): # 인자를 JSON 문자열로 받음
+def analyze_sentiment_with_gemini(articles_json: str):
     """
-    [성능 개선] Gemini API를 사용하여 감성 분석을 수행하고, 결과를 캐싱합니다.
-    articles_json은 캐시를 위해 JSON 문자열이어야 합니다.
+    Gemini API를 사용하여 감성 분석을 수행하고, 결과를 캐싱합니다.
     """
-    articles = json.loads(articles_json) # JSON 문자열을 파이썬 객체로 변환
+    articles = json.loads(articles_json)
 
     if not GEMINI_API_KEY:
         raise ConnectionError("Gemini API 키가 설정되지 않았습니다.")
