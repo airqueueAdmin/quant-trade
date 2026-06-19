@@ -32,6 +32,9 @@ if submitted_step1:
     st.session_state['end_date'] = end_date
     st.session_state['initial_capital'] = initial_capital
     st.session_state['step'] = 2 # 다음 단계로 이동
+    # 기본 설정 변경 시 이전 결과 삭제
+    if 'backtest_results' in st.session_state:
+        del st.session_state['backtest_results']
 
 if 'step' not in st.session_state:
     st.session_state['step'] = 1
@@ -41,11 +44,28 @@ if st.session_state['step'] >= 2:
     st.write("테스트하고 싶은 투자 전략을 선택하고, 세부 파라미터를 설정합니다.")
 
     mode = st.radio("모드 선택", ["일반 백테스트", "전략 최적화"], help="일반 백테스트는 단일 파라미터로 시뮬레이션하고, 전략 최적화는 여러 파라미터 조합 중 최적의 조합을 찾아줍니다.")
+    
+    # 모드 변경 시 이전 결과 삭제
+    if 'prev_mode' not in st.session_state:
+        st.session_state['prev_mode'] = mode
+    elif st.session_state['prev_mode'] != mode:
+        st.session_state['prev_mode'] = mode
+        if 'backtest_results' in st.session_state:
+            del st.session_state['backtest_results']
+
     metric_to_optimize = "sharpe_ratio"
     if mode == "전략 최적화":
         metric_to_optimize = st.selectbox("최적화 기준 지표", ["sharpe_ratio", "total_return_pct"], format_func=lambda x: "샤프 지수" if x == "sharpe_ratio" else "총수익률")
 
     strategy = st.selectbox("전략 선택", ["이동평균", "RSI", "볼린저 밴드"])
+
+    # 전략 변경 시 이전 결과 삭제
+    if 'prev_strategy' not in st.session_state:
+        st.session_state['prev_strategy'] = strategy
+    elif st.session_state['prev_strategy'] != strategy:
+        st.session_state['prev_strategy'] = strategy
+        if 'backtest_results' in st.session_state:
+            del st.session_state['backtest_results']
 
     with st.form("strategy_settings_form"): # key 인자 제거
         params = {}
@@ -171,69 +191,83 @@ if st.session_state['step'] >= 2:
             try:
                 response = requests.post(url, json=request_payload)
                 response.raise_for_status()
-                results = response.json()
-
-                if mode == "일반 백테스트":
-                    st.header(f"📊 '{strategy}' 전략 시뮬레이션 결과")
-                    st.subheader("📈 주요 성과 지표")
-                    with st.expander("지표 설명 보기"):
-                        st.info("""
-                            - **총수익률 (%):** 투자 원금 대비 얼마나 벌었는지 보여줍니다.
-                            - **샤프 지수:** 위험 대비 수익성을 나타냅니다. 숫자가 높을수록 '감수한 위험에 비해 보상이 컸다'는 의미입니다. (보통 1 이상이면 좋다고 평가합니다.)
-                            - **최대 낙폭 (%):** 투자 기간 중 가장 크게 손실을 본 구간의 하락률입니다. 이 전략의 '최악의 순간'을 보여줍니다.
-                            - **총 거래 횟수:** 시뮬레이션 기간 동안 주식을 사고 판 횟수입니다.
-                            - **최종 자산:** 투자 원금이 시뮬레이션 후 얼마가 되었는지 보여줍니다.
-                        """)
-                    metrics = results.get("performance_metrics", {})
-                    col1, col2, col3, col4, col5 = st.columns(5)
-                    col1.metric("총수익률", f"{metrics.get('total_return_pct', 0):.2f}%")
-                    col2.metric("샤프 지수", f"{metrics.get('sharpe_ratio', 0):.2f}")
-                    col3.metric("최대 낙폭", f"{metrics.get('max_drawdown_pct', 0):.2f}%")
-                    col4.metric("총 거래 횟수", metrics.get('total_trades', 0))
-                    col5.metric("최종 자산", f"${metrics.get('final_total_value', 0):,.2f}")
-
-                    st.subheader("💰 자산 변화 그래프")
-                    portfolio_df = pd.DataFrame(results.get("portfolio_history", []))
-                    if not portfolio_df.empty:
-                        portfolio_df['Date'] = pd.to_datetime(portfolio_df['Date'])
-                        fig = px.line(portfolio_df, x='Date', y='total_value', title='나의 자산은 어떻게 변했을까?')
-                        st.plotly_chart(fig, use_container_width=True)
-
-                    st.subheader("📋 상세 거래 내역")
-                    with st.expander("시뮬레이션은 어떻게 작동하나요? (거래 기준)"):
-                        st.info("""
-                            - **거래 타이밍:** 모든 거래는 투자 전략에 따라 **매수 또는 매도 신호가 발생한 날의 다음 날 아침(시가)**에 이루어집니다.
-                            - **거래 가격:** 거래는 **다음 날의 시가(Open Price)**를 기준으로 체결됩니다.
-                            - **거래 수량:**
-                                - **매수 시:** 현재 보유한 현금을 모두 사용하여 살 수 있는 최대 수량의 주식을 매수합니다. (All-in)
-                                - **매도 시:** 보유하고 있는 모든 주식을 매도합니다. (All-out)
-                            - **수수료:** 모든 거래에는 0.1%의 수수료가 적용됩니다.
-                        """)
-                    trades_df = pd.DataFrame(results.get("trades", []))
-                    if not trades_df.empty:
-                        trades_df['Date'] = pd.to_datetime(trades_df['Date']).dt.strftime('%Y-%m-%d %H:%M:%S')
-                        st.dataframe(trades_df, use_container_width=True)
-                else: # 전략 최적화 결과 표시
-                    st.header(f"✨ '{strategy}' 전략 최적화 결과")
-                    best_params = results.get("best_params", {})
-                    best_metric_value = results.get("best_metric_value", 0)
-                    metric_optimized = results.get("metric_optimized", "")
-
-                    st.subheader(f"🏆 최적 파라미터 (기준: {metric_to_optimize})")
-                    st.write(f"**최적 {metric_optimized}**: {best_metric_value:.2f}")
-                    st.json(best_params)
-
-                    st.subheader("🔍 모든 최적화 결과")
-                    all_optimization_results = results.get("all_optimization_results", [])
-                    if all_optimization_results:
-                        df_results = pd.DataFrame([
-                            {**item['params'], **item['metrics']} for item in all_optimization_results
-                        ])
-                        st.dataframe(df_results.sort_values(by=metric_to_optimize, ascending=False), use_container_width=True)
-                    else:
-                        st.info("최적화 결과가 없습니다.")
-
+                st.session_state['backtest_results'] = response.json()
+                st.session_state['last_run_mode'] = mode
+                st.session_state['last_run_strategy'] = strategy
             except requests.exceptions.RequestException as e:
                 st.error(f"백엔드 서버 연결에 실패했습니다: {e}")
+                if 'backtest_results' in st.session_state:
+                    del st.session_state['backtest_results']
             except Exception as e:
                 st.error(f"오류가 발생했습니다: {e}")
+                if 'backtest_results' in st.session_state:
+                    del st.session_state['backtest_results']
+
+    # 기 수행된 결과가 세션 상태에 있으면 출력
+    if 'backtest_results' in st.session_state:
+        results = st.session_state['backtest_results']
+        run_mode = st.session_state.get('last_run_mode', mode)
+        run_strategy = st.session_state.get('last_run_strategy', strategy)
+
+        if run_mode == "일반 백테스트":
+            st.header(f"📊 '{run_strategy}' 전략 시뮬레이션 결과")
+            st.subheader("📈 주요 성과 지표")
+            with st.expander("지표 설명 보기"):
+                st.info("""
+                    - **총수익률 (%):** 투자 원금 대비 얼마나 벌었는지 보여줍니다.
+                    - **샤프 지수:** 위험 대비 수익성을 나타냅니다. 숫자가 높을수록 '감수한 위험에 비해 보상이 컸다'는 의미입니다. (보통 1 이상이면 좋다고 평가합니다.)
+                    - **최대 낙폭 (%):** 투자 기간 중 가장 크게 손실을 본 구간의 하락률입니다. 이 전략의 '최악의 순간'을 보여줍니다.
+                    - **총 거래 횟수:** 시뮬레이션 기간 동안 주식을 사고 판 횟수입니다.
+                    - **최종 자산:** 투자 원금이 시뮬레이션 후 얼마가 되었는지 보여줍니다.
+                """)
+            metrics = results.get("performance_metrics", {})
+            col1, col2, col3, col4, col5 = st.columns(5)
+            col1.metric("총수익률", f"{metrics.get('total_return_pct', 0):.2f}%")
+            col2.metric("샤프 지수", f"{metrics.get('sharpe_ratio', 0):.2f}")
+            col3.metric("최대 낙폭", f"{metrics.get('max_drawdown_pct', 0):.2f}%")
+            col4.metric("총 거래 횟수", metrics.get('total_trades', 0))
+            col5.metric("최종 자산", f"${metrics.get('final_total_value', 0):,.2f}")
+
+            st.subheader("💰 자산 변화 그래프")
+            portfolio_df = pd.DataFrame(results.get("portfolio_history", []))
+            if not portfolio_df.empty:
+                portfolio_df['Date'] = pd.to_datetime(portfolio_df['Date'])
+                fig = px.line(portfolio_df, x='Date', y='total_value', title='나의 자산은 어떻게 변했을까?')
+                st.plotly_chart(fig, use_container_width=True)
+
+            st.subheader("📋 상세 거래 내역")
+            with st.expander("시뮬레이션은 어떻게 작동하나요? (거래 기준)"):
+                st.info("""
+                    - **거래 타이밍:** 모든 거래는 투자 전략에 따라 **매수 또는 매도 신호가 발생한 날의 다음 날 아침(시가)**에 이루어집니다.
+                    - **거래 가격:** 거래는 **다음 날의 시가(Open Price)**를 기준으로 체결됩니다.
+                    - **거래 수량:**
+                        - **매수 시:** 현재 보유한 현금을 모두 사용하여 살 수 있는 최대 수량의 주식을 매수합니다. (All-in)
+                        - **매도 시:** 보유하고 있는 모든 주식을 매도합니다. (All-out)
+                    - **수수료:** 모든 거래에는 0.1%의 수수료가 적용됩니다.
+                """)
+            trades_df = pd.DataFrame(results.get("trades", []))
+            if not trades_df.empty:
+                trades_df['Date'] = pd.to_datetime(trades_df['Date']).dt.strftime('%Y-%m-%d %H:%M:%S')
+                st.dataframe(trades_df, use_container_width=True)
+        else: # 전략 최적화 결과 표시
+            st.header(f"✨ '{run_strategy}' 전략 최적화 결과")
+            best_params = results.get("best_params", {})
+            best_metric_value = results.get("best_metric_value", 0)
+            metric_optimized = results.get("metric_optimized", "")
+
+            # 사용자 선택한 메트릭 텍스트 표시
+            metric_label = "샤프 지수" if metric_optimized == "sharpe_ratio" else "총수익률"
+            st.subheader(f"🏆 최적 파라미터 (기준: {metric_label})")
+            st.write(f"**최적 {metric_label}**: {best_metric_value:.2f}")
+            st.json(best_params)
+
+            st.subheader("🔍 모든 최적화 결과")
+            all_optimization_results = results.get("all_optimization_results", [])
+            if all_optimization_results:
+                df_results = pd.DataFrame([
+                    {**item['params'], **item['metrics']} for item in all_optimization_results
+                ])
+                sort_col = metric_optimized if metric_optimized in df_results.columns else df_results.columns[0]
+                st.dataframe(df_results.sort_values(by=sort_col, ascending=False), use_container_width=True)
+            else:
+                st.info("최적화 결과가 없습니다.")
