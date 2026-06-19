@@ -39,7 +39,8 @@ if submitted_step1:
 if 'step' not in st.session_state:
     st.session_state['step'] = 1
 
-if st.session_state['step'] >= 2:
+@st.fragment
+def render_step_2():
     st.header("단계 2: 전략 선택 및 파라미터 설정")
     st.write("테스트하고 싶은 투자 전략을 선택하고, 세부 파라미터를 설정합니다.")
 
@@ -232,8 +233,8 @@ if st.session_state['step'] >= 2:
             portfolio_df = pd.DataFrame(results.get("portfolio_history", []))
             if not portfolio_df.empty:
                 portfolio_df['Date'] = pd.to_datetime(portfolio_df['Date'])
-                fig = px.line(portfolio_df, x='Date', y='total_value', title='나의 자산은 어떻게 변했을까?')
-                st.plotly_chart(fig, use_container_width=True)
+                chart_data = portfolio_df.set_index('Date')[['total_value']]
+                st.line_chart(chart_data)
 
             st.subheader("📋 상세 거래 내역")
             with st.expander("시뮬레이션은 어떻게 작동하나요? (거래 기준)"):
@@ -271,3 +272,6 @@ if st.session_state['step'] >= 2:
                 st.dataframe(df_results.sort_values(by=sort_col, ascending=False), use_container_width=True)
             else:
                 st.info("최적화 결과가 없습니다.")
+
+if st.session_state['step'] >= 2:
+    render_step_2()
