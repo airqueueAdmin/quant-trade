@@ -26,7 +26,7 @@ PREFERRED_GEMINI_MODELS = ['gemini-1.5-flash-latest', 'gemini-1.0-pro']
 @lru_cache(maxsize=32)
 def get_news(ticker: str, language: str = 'en', page_size: int = 10):
     """
-    [성능 개선] NewsAPI를 사용하여 최신 뉴스를 가져오고, 결과를 캐싱합니다.
+    NewsAPI를 사용하여 최신 뉴스를 가져오고, 결과를 캐싱합니다.
     """
     if not NEWS_API_KEY:
         return tuple()
@@ -57,10 +57,13 @@ def get_news(ticker: str, language: str = 'en', page_size: int = 10):
         return tuple()
 
 @lru_cache(maxsize=32)
-def analyze_sentiment_with_gemini(articles: tuple):
+def analyze_sentiment_with_gemini(articles_json: str): # 인자를 JSON 문자열로 받음
     """
     [성능 개선] Gemini API를 사용하여 감성 분석을 수행하고, 결과를 캐싱합니다.
+    articles_json은 캐시를 위해 JSON 문자열이어야 합니다.
     """
+    articles = json.loads(articles_json) # JSON 문자열을 파이썬 객체로 변환
+
     if not GEMINI_API_KEY:
         raise ConnectionError("Gemini API 키가 설정되지 않았습니다.")
 
@@ -93,7 +96,7 @@ def analyze_sentiment_with_gemini(articles: tuple):
             json_text = response.text.strip().replace('```json', '').replace('```', '').strip()
 
             result = json.loads(json_text)
-            result['articles'] = list(articles)
+            result['articles'] = articles
             print(f"Successfully used Gemini model: {model_name}")
             return json.dumps(result)
         except Exception as e:
@@ -105,6 +108,6 @@ def analyze_sentiment_with_gemini(articles: tuple):
     result = {
         "sentiment_score": 50,
         "summary": f"모든 Gemini 모델 시도 실패. 마지막 오류: {last_error}",
-        "articles": list(articles)
+        "articles": articles
     }
     return json.dumps(result)

@@ -2,7 +2,7 @@ from fastapi import FastAPI, Response, HTTPException
 from pydantic import BaseModel, Field
 from typing import Dict, Any, List, Optional
 import numpy as np
-import json # json 임포트 추가
+import json
 
 from data_provider import get_stock_data
 from strategies.moving_average import moving_average_cross_strategy
@@ -74,8 +74,10 @@ def read_root():
 @app.get("/sentiment/{ticker}")
 def get_sentiment(ticker: str):
     articles = gemini_analyzer.get_news(ticker)
-    sentiment_result_str = gemini_analyzer.analyze_sentiment_with_gemini(articles)
-    return json.loads(sentiment_result_str) # JSON 문자열을 객체로 변환하여 반환
+    # 튜플을 JSON 문자열로 변환하여 캐시 가능한 인자로 전달
+    articles_json = json.dumps(list(articles))
+    sentiment_result_str = gemini_analyzer.analyze_sentiment_with_gemini(articles_json)
+    return json.loads(sentiment_result_str)
 
 @app.post("/backtest/moving_average")
 def run_moving_average_backtest(request: MovingAverageRequest):
