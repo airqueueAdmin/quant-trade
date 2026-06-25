@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import streamlit as st
-import streamlit.components.v1 as components
 
 
 def inject_google_analytics(measurement_id: str | None, page_key: str) -> None:
@@ -14,17 +13,25 @@ def inject_google_analytics(measurement_id: str | None, page_key: str) -> None:
         return
 
     st.session_state[session_key] = True
-    components.html(
+    st.html(
         f"""
-        <!-- Google tag (gtag.js) -->
-        <script async src="https://www.googletagmanager.com/gtag/js?id={measurement_id}"></script>
         <script>
-          window.dataLayer = window.dataLayer || [];
-          function gtag(){{dataLayer.push(arguments);}}
-          gtag('js', new Date());
-          gtag('config', '{measurement_id}');
+          (function() {{
+            if (window.__ga_injected_{page_key}) return;
+            window.__ga_injected_{page_key} = true;
+
+            var gtagScript = document.createElement('script');
+            gtagScript.async = true;
+            gtagScript.src = 'https://www.googletagmanager.com/gtag/js?id={measurement_id}';
+            document.head.appendChild(gtagScript);
+
+            window.dataLayer = window.dataLayer || [];
+            function gtag() {{ dataLayer.push(arguments); }}
+            window.gtag = gtag;
+            gtag('js', new Date());
+            gtag('config', '{measurement_id}');
+          }})();
         </script>
         """,
-        height=0,
-        width=0,
+        unsafe_allow_javascript=True,
     )
