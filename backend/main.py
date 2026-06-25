@@ -5,7 +5,7 @@ import json
 
 import numpy as np
 import pandas as pd
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response, status
 from pydantic import BaseModel, Field, field_validator, model_validator
 import yfinance as yf
 
@@ -286,6 +286,21 @@ def run_optimization(
 @app.get("/")
 def root() -> dict[str, str]:
     return {"message": "Quant Trading API is running."}
+
+
+@app.head("/", include_in_schema=False, status_code=status.HTTP_200_OK)
+def root_head() -> Response:
+    return Response(status_code=status.HTTP_200_OK)
+
+
+@app.get("/healthz", include_in_schema=False)
+def healthz_get() -> dict[str, str]:
+    return {"status": "ok"}
+
+
+@app.head("/healthz", include_in_schema=False, status_code=status.HTTP_200_OK)
+def healthz_head() -> Response:
+    return Response(status_code=status.HTTP_200_OK)
 
 
 @app.get("/stocks/krx/search")
