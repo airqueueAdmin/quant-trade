@@ -4,5 +4,5 @@ yfinance
 numpy
 pandas
 gnews
-google-generativeai
+google-genai
 python-dotenv

@@ -19,7 +19,9 @@ def grid_search_optimizer(
     data: pd.DataFrame,
     initial_capital: float,
     param_grid: dict,
-    metric_to_optimize: str = 'sharpe_ratio'
+    metric_to_optimize: str = 'sharpe_ratio',
+    order_type: str = 'all_in',
+    fixed_amount: float | None = None,
 ) -> dict:
     """
     주어진 전략과 파라미터 그리드에 대해 그리드 서치 최적화를 수행합니다.
@@ -54,7 +56,12 @@ def grid_search_optimizer(
 
         try:
             signals = strategy_func(data.copy(), **current_params)
-            _, _, metrics = backtest_strategy(signals, initial_capital)
+            _, _, metrics = backtest_strategy(
+                signals,
+                initial_capital=initial_capital,
+                order_type=order_type,
+                fixed_amount=fixed_amount or initial_capital,
+            )
 
             current_metric_value = metrics.get(metric_to_optimize, -np.inf)
 
