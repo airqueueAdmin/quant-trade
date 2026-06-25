@@ -20,6 +20,44 @@ st.set_page_config(layout="wide", page_title="실전 매매 가이드")
 if FX_RATE:
     st.caption(f"환율 기준: 1 USD = {FX_RATE['rate']:,.2f} KRW")
 
+st.markdown(
+    """
+    <style>
+    .compact-metric-card {
+        border: 1px solid rgba(120, 120, 120, 0.25);
+        border-radius: 14px;
+        padding: 0.9rem 1rem;
+        background: rgba(255, 255, 255, 0.02);
+        min-height: 110px;
+    }
+    .compact-metric-label {
+        font-size: 0.9rem;
+        color: rgba(250, 250, 250, 0.75);
+        margin-bottom: 0.35rem;
+    }
+    .compact-metric-value {
+        font-size: 1.15rem;
+        line-height: 1.35;
+        font-weight: 700;
+        word-break: break-word;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+
+def render_compact_metric(label: str, value: str, column) -> None:
+    column.markdown(
+        f"""
+        <div class="compact-metric-card">
+            <div class="compact-metric-label">{label}</div>
+            <div class="compact-metric-value">{value}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
 
 def classify_position_plan(metrics, comparison_metrics, rules):
     excess_return = comparison_metrics.get("excess_return_pct", 0.0)
@@ -101,6 +139,120 @@ def render_plan_status(plan):
         st.success(message)
     else:
         st.warning(message)
+
+
+def render_step_cards(items):
+    columns = st.columns(len(items))
+    for column, item in zip(columns, items):
+        column.markdown(
+            f"""
+            ### {item['step']}
+            **{item['title']}**
+
+            {item['body']}
+            """
+        )
+
+
+def render_quick_start(backtest_results, backtest_context, backtest_market):
+    st.subheader("오늘 바로 따라가는 주문 흐름")
+    st.caption("처음 온 사람은 이 탭만 먼저 따라가면 됩니다. 아래 순서대로 입력하면 오늘 주문 크기와 다음 행동이 바로 정리됩니다.")
+
+    render_step_cards(
+        [
+            {"step": "1", "title": "시장 고르기", "body": "미국주식인지 국내주식인지 먼저 정합니다."},
+            {"step": "2", "title": "주문 예산 정하기", "body": "이번 1회 주문에 쓸 금액만 따로 잡습니다."},
+            {"step": "3", "title": "주문 방식 고르기", "body": "급하지 않으면 지정가를 먼저 봅니다."},
+            {"step": "4", "title": "최종 점검", "body": "손절 기준과 남는 현금을 확인한 뒤 주문합니다."},
+        ]
+    )
+
+    quick_market = st.radio("이번에 주문할 시장", ["us", "krx"], format_func=market_display_name, horizontal=True, key="quick_market")
+    quick_budget = st.number_input(
+        "이번 1회 주문 예산",
+        min_value=0.0,
+        value=200.0 if quick_market == "us" else 200000.0,
+        step=10.0 if quick_market == "us" else 10000.0,
+        key="quick_budget",
+    )
+    quick_price = st.number_input(
+        "예상 매수가",
+        min_value=0.01,
+        value=95.0 if quick_market == "us" else 70000.0,
+        step=0.1 if quick_market == "us" else 100.0,
+        key="quick_price",
+    )
+    quick_fee_pct = st.number_input(
+        "예상 수수료 (%)",
+        min_value=0.0,
+        value=0.10,
+        step=0.01,
+        key="quick_fee_pct",
+    )
+    quick_order_style = st.radio(
+        "주문 방식",
+        ["limit", "market"],
+        format_func=lambda x: "지정가" if x == "limit" else "시장가",
+        horizontal=True,
+        key="quick_order_style",
+    )
+    quick_split_count = st.select_slider("몇 번에 나눠서 살지", options=[1, 2, 3, 4, 5], value=3, key="quick_split_count")
+
+    quick_fee_rate = quick_fee_pct / 100
+    quick_shares = dollars_to_shares(quick_budget, quick_price, quick_fee_rate)
+    quick_total = quick_shares * quick_price * (1 + quick_fee_rate)
+    quick_cash_left = quick_budget - quick_total
+    quick_split_budget = quick_budget / quick_split_count if quick_split_count else quick_budget
+    quick_split_shares = dollars_to_shares(quick_split_budget, quick_price, quick_fee_rate)
+
+    metric1, metric2, metric3, metric4 = st.columns(4)
+    render_compact_metric("가능 수량", f"{quick_shares}주", metric1)
+    render_compact_metric("예상 주문금액", format_market_amount(quick_total, quick_market, FX_RATE["rate"] if FX_RATE else None), metric2)
+    render_compact_metric("남는 현금", format_market_amount(quick_cash_left, quick_market, FX_RATE["rate"] if FX_RATE else None), metric3)
+    render_compact_metric("분할 1회 수량", f"{quick_split_shares}주", metric4)
+
+    next_action_message = "오늘은 소액 지정가부터 검토하는 흐름이 무난합니다." if quick_order_style == "limit" else "시장가를 쓰려면 거래량과 호가 차이를 먼저 확인하세요."
+    st.info(next_action_message)
+
+    final_check_col, action_col = st.columns([1.2, 1])
+    with final_check_col:
+        st.subheader("주문 직전 체크")
+        quick_checks = [
+            "이번 주문 금액이 생활비/비상금과 분리되어 있다.",
+            "왜 사는지 한 줄로 설명할 수 있다.",
+            "손실 시 다시 볼 기준(-5% ~ -10% 등)을 정했다.",
+            "한 번에 몰빵하지 않고 나눠서 살 계획이 있다.",
+        ]
+        checked_count = 0
+        for index, item in enumerate(quick_checks):
+            if st.checkbox(item, key=f"quick_check_{index}"):
+                checked_count += 1
+        st.caption(f"체크 완료: {checked_count}/{len(quick_checks)}")
+
+    with action_col:
+        st.subheader("오늘의 액션")
+        if checked_count == len(quick_checks):
+            st.success("주문 전 최소 기준은 통과했습니다.")
+        else:
+            st.warning("체크리스트를 모두 확인한 뒤 주문하는 편이 좋습니다.")
+
+        st.markdown(
+            f"""
+            - 추천 주문 방식: **{"지정가" if quick_order_style == "limit" else "시장가"}**
+            - 1회 예산: **{format_market_amount(quick_budget, quick_market, FX_RATE["rate"] if FX_RATE else None)}**
+            - 분할 횟수: **{quick_split_count}회**
+            - 1회 분할 예산: **{format_market_amount(quick_split_budget, quick_market, FX_RATE["rate"] if FX_RATE else None)}**
+            """
+        )
+
+        if backtest_results and backtest_context.get("mode") == "일반 백테스트":
+            st.caption(
+                f"최근 백테스트 연결 가능: {market_display_name(backtest_market)} "
+                f"{backtest_context.get('ticker', '-')}"
+            )
+            st.write("더 정교한 주문 한도는 아래 `백테스트 연동` 탭에서 계산할 수 있습니다.")
+        else:
+            st.write("아직 백테스트 결과가 없으면, 먼저 소액으로 시작하고 이후 백테스트 연동 탭을 사용하는 흐름이 좋습니다.")
 
 
 def render_glossary():
@@ -233,6 +385,12 @@ def render_plan_rule_controls(default_rules):
 
 st.title("🧭 초보자를 위한 실전 매매 가이드")
 st.caption("이 페이지는 교육용 안내입니다. 특정 종목 매수 추천이 아니라, 실제 주문 전에 확인해야 할 절차와 판단 기준을 정리한 것입니다.")
+st.info("""
+권장 사용 순서:
+1. `0. 빠른 시작`에서 오늘 주문 흐름을 먼저 정리
+2. `4. 금액 계산`에서 수량과 예산 확인
+3. 백테스트를 돌렸다면 `7. 백테스트 연동`에서 주문 한도 다시 점검
+""")
 
 st.warning("""
 초보자 원칙:
@@ -241,15 +399,26 @@ st.warning("""
 - 한 번에 큰 금액을 넣기보다, 이해 가능한 금액으로 작게 시작하세요.
 """)
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
-    "1. 시작 전",
-    "2. 종목 고르기",
-    "3. 주문 넣기",
+backtest_results = st.session_state.get("backtest_results")
+last_run_mode = st.session_state.get("last_run_mode")
+backtest_context = st.session_state.get("last_backtest_context", {})
+ticker = st.session_state.get("ticker_backtest")
+strategy = st.session_state.get("last_run_strategy")
+backtest_market = backtest_context.get("market", st.session_state.get("market_backtest", "us"))
+
+tab0, tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+    "0. 빠른 시작",
+    "1. 준비",
+    "2. 종목 확인",
+    "3. 주문 방식",
     "4. 금액 계산",
     "5. 백테스트 읽기",
     "6. 실수 방지",
     "7. 백테스트 연동",
 ])
+
+with tab0:
+    render_quick_start(backtest_results, backtest_context, backtest_market)
 
 with tab1:
     st.subheader("매수 전에 먼저 정해야 할 5가지")
@@ -366,9 +535,9 @@ with tab4:
     estimated_cash_left = budget - estimated_total
 
     c1, c2, c3 = st.columns(3)
-    c1.metric("매수 가능 수량", f"{max_shares}주")
-    c2.metric("예상 총 주문금액", format_market_amount(estimated_total, calculator_market, FX_RATE["rate"] if FX_RATE else None))
-    c3.metric("남는 현금", format_market_amount(estimated_cash_left, calculator_market, FX_RATE["rate"] if FX_RATE else None))
+    render_compact_metric("매수 가능 수량", f"{max_shares}주", c1)
+    render_compact_metric("예상 총 주문금액", format_market_amount(estimated_total, calculator_market, FX_RATE["rate"] if FX_RATE else None), c2)
+    render_compact_metric("남는 현금", format_market_amount(estimated_cash_left, calculator_market, FX_RATE["rate"] if FX_RATE else None), c3)
 
     st.subheader("분할매수 기준 예시")
     total_budget = st.number_input("전체 투자 예정 금액", min_value=0.0, value=1000.0, step=50.0)
@@ -441,14 +610,7 @@ with tab6:
 
 with tab7:
     st.subheader("백테스트 연동 주문 가이드")
-    st.caption("이 탭은 가장 최근에 실행한 `일반 백테스트` 1건을 읽어서 주문 한도를 계산합니다. 자동매매가 아니라 교육용 계산기입니다.")
-
-    backtest_results = st.session_state.get("backtest_results")
-    last_run_mode = st.session_state.get("last_run_mode")
-    backtest_context = st.session_state.get("last_backtest_context", {})
-    ticker = st.session_state.get("ticker_backtest")
-    strategy = st.session_state.get("last_run_strategy")
-    backtest_market = backtest_context.get("market", st.session_state.get("market_backtest", "us"))
+    st.caption("최근 `일반 백테스트` 결과를 읽어 주문 한도와 진입 강도를 계산합니다. 자동매매가 아니라, 실전 주문 크기를 제한하는 가드레일입니다.")
 
     if not backtest_results or last_run_mode != "일반 백테스트":
         st.info("""

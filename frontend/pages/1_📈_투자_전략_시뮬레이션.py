@@ -23,6 +23,52 @@ BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000")
 FX_RATE = get_usdkrw_rate()
 DEFAULT_END_DATE = datetime.now().date()
 DEFAULT_START_DATE = DEFAULT_END_DATE - timedelta(days=365)
+PARAMETER_LABELS = {
+    "short_window": "단기 평균 기간",
+    "long_window": "장기 평균 기간",
+    "window": "계산 기간",
+    "oversold_threshold": "과매도 기준선",
+    "overbought_threshold": "과매수 기준선",
+    "num_std_dev": "표준편차 배수",
+}
+METRIC_LABELS = {
+    "sharpe_ratio": "샤프 지수",
+    "total_return_pct": "총수익률(%)",
+    "cagr_pct": "CAGR(%)",
+    "sortino_ratio": "소르티노 지수",
+    "final_total_value": "최종 자산",
+    "max_drawdown_pct": "최대 낙폭(%)",
+    "annual_volatility_pct": "연환산 변동성(%)",
+    "total_trades": "총 거래 횟수",
+    "win_rate": "승률(%)",
+    "average_profit_pct": "평균 수익률(%)",
+    "profit_factor": "프로핏 팩터",
+}
+
+
+def label_parameter(param_name: str) -> str:
+    return PARAMETER_LABELS.get(param_name, param_name)
+
+
+def label_metric(metric_name: str) -> str:
+    return METRIC_LABELS.get(metric_name, metric_name)
+
+
+def format_best_params(best_params: dict) -> pd.DataFrame:
+    if not best_params:
+        return pd.DataFrame(columns=["파라미터", "값"])
+    return pd.DataFrame(
+        [{"파라미터": label_parameter(key), "값": value} for key, value in best_params.items()]
+    )
+
+
+def format_optimization_results(all_optimization_results: list[dict]) -> pd.DataFrame:
+    rows = [{**item["params"], **item["metrics"]} for item in all_optimization_results]
+    if not rows:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(rows)
+    return df.rename(columns={column: label_parameter(column) if column in PARAMETER_LABELS else label_metric(column) for column in df.columns})
 
 st.set_page_config(layout="wide", page_title="투자 전략 시뮬레이션")
 
@@ -303,7 +349,17 @@ if st.sidebar.button("실행"):
 
                 st.subheader("📋 상세 거래 내역")
                 with st.expander("시뮬레이션은 어떻게 작동하나요? (거래 기준)"):
-                    st.info("...")
+                    st.info(
+                        """
+                        - 전략은 각 날짜의 종가까지 포함한 데이터를 보고 `매수(1)` 또는 `매도(-1)` 신호를 만듭니다.
+                        - 실제 주문 체결가는 `신호가 나온 다음 거래일의 시가(Open)`로 가정합니다.
+                        - `전액 매수/매도`는 매수 신호가 나오면 남은 현금으로 최대한 사고, 매도 신호가 나오면 보유 수량을 전부 팝니다.
+                        - `고정 금액 분할 매수`는 매수 신호마다 지정한 금액 한도 안에서만 매수하고, 매도 신호가 나오면 역시 전량 매도합니다.
+                        - 수수료는 기본적으로 거래당 `0.1%`를 반영합니다.
+                        - 포트폴리오 가치는 매일 `현금 + 보유 주식의 당일 종가 기준 평가금액`으로 계산합니다.
+                        - 비교용 `단순 보유`는 시작일 첫 거래일 시가에 최대한 매수한 뒤 종료일까지 계속 보유하는 방식입니다.
+                        """
+                    )
                 trades_df = pd.DataFrame(results.get("trades", []))
                 if not trades_df.empty:
                     trades_df['Date'] = pd.to_datetime(trades_df['Date']).dt.strftime('%Y-%m-%d %H:%M:%S')
@@ -313,14 +369,22 @@ if st.sidebar.button("실행"):
                 best_params = results.get("best_params", {})
                 best_metric_value = results.get("best_metric_value", 0)
                 metric_optimized = results.get("metric_optimized", "")
-                st.subheader(f"🏆 최적 파라미터 (기준: {metric_to_optimize})")
-                st.write(f"**최적 {metric_optimized}**: {best_metric_value:.2f}")
-                st.json(best_params)
+                metric_label = label_metric(metric_optimized or metric_to_optimize)
+                st.subheader(f"🏆 최적 파라미터 (기준: {metric_label})")
+                st.write(f"**최적 {metric_label}**: {best_metric_value:.2f}")
+                best_params_df = format_best_params(best_params)
+                if not best_params_df.empty:
+                    st.dataframe(best_params_df, use_container_width=True, hide_index=True)
+                else:
+                    st.info("표시할 최적 파라미터가 없습니다.")
                 st.subheader("🔍 모든 최적화 결과")
                 all_optimization_results = results.get("all_optimization_results", [])
                 if all_optimization_results:
-                    df_results = pd.DataFrame([{**item['params'], **item['metrics']} for item in all_optimization_results])
-                    st.dataframe(df_results.sort_values(by=metric_to_optimize, ascending=False), use_container_width=True)
+                    df_results = format_optimization_results(all_optimization_results)
+                    sort_column = label_metric(metric_to_optimize)
+                    if sort_column in df_results.columns:
+                        df_results = df_results.sort_values(by=sort_column, ascending=False)
+                    st.dataframe(df_results, use_container_width=True)
                 else:
                     st.info("최적화 결과가 없습니다.")
         except requests.exceptions.RequestException as e:

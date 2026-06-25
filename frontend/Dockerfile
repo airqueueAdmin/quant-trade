@@ -14,4 +14,4 @@ COPY . .
 # 5. 앱 실행 (Procfile의 내용을 여기에 정의)
 # Streamlit의 기본 포트는 8501이므로 명시적으로 노출
 EXPOSE 8501
-CMD ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+CMD ["streamlit", "run", "홈.py", "--server.port=8501", "--server.address=0.0.0.0"]
