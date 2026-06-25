@@ -8,7 +8,7 @@ st.set_page_config(
     layout="wide"
 )
 
-inject_google_analytics(os.getenv("GA_MEASUREMENT_ID"), "home")
+inject_google_analytics(os.getenv("GA_MEASUREMENT_ID") or os.getenv("GA_TAG_ID"), "home")
 
 st.title("🚀 홈")
 st.sidebar.success("왼쪽 메뉴를 선택하세요.")

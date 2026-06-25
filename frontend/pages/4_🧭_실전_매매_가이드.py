@@ -19,7 +19,7 @@ DEFAULT_PLAN_RULES = {
 }
 
 st.set_page_config(layout="wide", page_title="실전 매매 가이드")
-inject_google_analytics(os.getenv("GA_MEASUREMENT_ID"), "trade_guide")
+inject_google_analytics(os.getenv("GA_MEASUREMENT_ID") or os.getenv("GA_TAG_ID"), "trade_guide")
 if FX_RATE:
     st.caption(f"환율 기준: 1 USD = {FX_RATE['rate']:,.2f} KRW")
 

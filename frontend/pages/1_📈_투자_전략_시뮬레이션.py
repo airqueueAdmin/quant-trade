@@ -72,7 +72,7 @@ def format_optimization_results(all_optimization_results: list[dict]) -> pd.Data
     return df.rename(columns={column: label_parameter(column) if column in PARAMETER_LABELS else label_metric(column) for column in df.columns})
 
 st.set_page_config(layout="wide", page_title="투자 전략 시뮬레이션")
-inject_google_analytics(os.getenv("GA_MEASUREMENT_ID"), "backtesting")
+inject_google_analytics(os.getenv("GA_MEASUREMENT_ID") or os.getenv("GA_TAG_ID"), "backtesting")
 
 st.title("📈 투자 전략 시뮬레이션")
 st.write("과거 데이터를 기반으로, 미국주식과 국내주식에 다양한 투자 전략을 적용했을 때 어떤 성과를 냈을지 테스트해볼 수 있습니다.")

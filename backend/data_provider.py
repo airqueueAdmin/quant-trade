@@ -119,7 +119,7 @@ def get_krx_listing() -> pd.DataFrame:
             cached = pd.read_csv(KRX_CACHE_FILE, dtype={"종목코드": str})
             cached["종목코드"] = cached["종목코드"].astype(str).str.zfill(6)
             return cached
-        raise
+        return pd.DataFrame(columns=["회사명", "종목코드", "krx_exchange", "display_name"])
 
 
 def search_krx_stocks(query: str, limit: int = 20) -> list[dict[str, str]]:
@@ -160,7 +160,10 @@ def get_krx_stock_by_ticker(ticker: str) -> dict[str, str] | None:
     if not re.fullmatch(r"\d{6}", normalized_ticker):
         return None
 
-    listing = get_krx_listing().copy()
+    try:
+        listing = get_krx_listing().copy()
+    except Exception:
+        return None
     matched = listing.loc[listing["종목코드"] == normalized_ticker]
     if matched.empty:
         return None
@@ -226,7 +229,10 @@ def get_symbol_profile(ticker: str, market: str = "us", krx_exchange: str = "aut
     candidates = build_symbol_candidates(ticker, market=market, krx_exchange=krx_exchange)
 
     if normalize_market(market) == "krx":
-        local_krx = get_krx_stock_by_ticker(ticker)
+        try:
+            local_krx = get_krx_stock_by_ticker(ticker)
+        except Exception:
+            local_krx = None
         if local_krx:
             return {
                 "ticker": normalize_ticker_input(ticker),

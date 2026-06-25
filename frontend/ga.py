@@ -16,12 +16,13 @@ def inject_google_analytics(measurement_id: str | None, page_key: str) -> None:
     st.session_state[session_key] = True
     components.html(
         f"""
+        <!-- Google tag (gtag.js) -->
         <script async src="https://www.googletagmanager.com/gtag/js?id={measurement_id}"></script>
         <script>
           window.dataLayer = window.dataLayer || [];
           function gtag(){{dataLayer.push(arguments);}}
           gtag('js', new Date());
-          gtag('config', '{measurement_id}', {{ send_page_view: true }});
+          gtag('config', '{measurement_id}');
         </script>
         """,
         height=0,

@@ -17,7 +17,7 @@ from market_utils import (
 BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000")
 
 st.set_page_config(layout="wide", page_title="AI 시장 분석")
-inject_google_analytics(os.getenv("GA_MEASUREMENT_ID"), "ai_analysis")
+inject_google_analytics(os.getenv("GA_MEASUREMENT_ID") or os.getenv("GA_TAG_ID"), "ai_analysis")
 
 st.title("🤖 AI 시장 분석")
 st.write("최신 뉴스를 기반으로, 미국주식과 국내주식에 대한 시장의 감정을 분석해 드립니다.")
