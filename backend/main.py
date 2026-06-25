@@ -10,7 +10,14 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 import yfinance as yf
 
 from backtester import backtest_buy_and_hold, backtest_strategy
-from data_provider import get_stock_data
+from data_provider import (
+    get_stock_data,
+    get_symbol_profile,
+    search_krx_stocks,
+    normalize_krx_exchange,
+    normalize_market,
+    normalize_ticker_input,
+)
 import gemini_analyzer
 import optimizer
 from strategies.bollinger_bands import bollinger_bands_strategy
@@ -21,7 +28,9 @@ app = FastAPI(title="Quant Trading API")
 
 
 class BaseBacktestRequest(BaseModel):
-    ticker: str = Field(min_length=1, max_length=20)
+    ticker: str = Field(min_length=1, max_length=32)
+    market: str = Field(default="us")
+    krx_exchange: str = Field(default="auto")
     start_date: str
     end_date: str
     initial_capital: float = Field(default=100000.0, gt=0)
@@ -31,7 +40,17 @@ class BaseBacktestRequest(BaseModel):
     @field_validator("ticker")
     @classmethod
     def normalize_ticker(cls, value: str) -> str:
-        return value.strip().upper()
+        return normalize_ticker_input(value)
+
+    @field_validator("market")
+    @classmethod
+    def validate_market(cls, value: str) -> str:
+        return normalize_market(value)
+
+    @field_validator("krx_exchange")
+    @classmethod
+    def validate_krx_exchange(cls, value: str) -> str:
+        return normalize_krx_exchange(value)
 
     @field_validator("order_type")
     @classmethod
@@ -103,7 +122,8 @@ class BollingerBandsOptimizationRequest(BaseOptimizationRequest):
     num_std_dev_range: list[float] = Field(min_length=3, max_length=3)
 
 
-def ensure_data(ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
+def ensure_data(ticker: str, start_date: str, end_date: str, market: str = "us", krx_exchange: str = "auto") -> pd.DataFrame:
+    market, krx_exchange = validate_market_params(market, krx_exchange)
     try:
         start_ts = pd.Timestamp(start_date)
         end_ts = pd.Timestamp(end_date)
@@ -113,7 +133,7 @@ def ensure_data(ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
     if start_ts >= end_ts:
         raise HTTPException(status_code=400, detail="시작일은 종료일보다 빨라야 합니다.")
 
-    data = get_stock_data(ticker, start_date, end_date)
+    data = get_stock_data(ticker, start_date, end_date, market=market, krx_exchange=krx_exchange)
     if data.empty:
         raise HTTPException(status_code=404, detail=f"{ticker}의 가격 데이터를 찾을 수 없습니다.")
 
@@ -126,6 +146,7 @@ def ensure_data(ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
         )
 
     cleaned = data.dropna(subset=["Open", "Close"]).copy()
+    cleaned.attrs = data.attrs.copy()
     if len(cleaned) < 2:
         raise HTTPException(status_code=400, detail="백테스트를 하기에 데이터가 충분하지 않습니다.")
 
@@ -148,6 +169,13 @@ def normalize_value(value: Any) -> Any:
     if hasattr(value, "isoformat"):
         return value.isoformat()
     return value
+
+
+def validate_market_params(market: str, krx_exchange: str) -> tuple[str, str]:
+    try:
+        return normalize_market(market), normalize_krx_exchange(krx_exchange)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 def serialize_portfolio(portfolio: pd.DataFrame) -> list[dict[str, Any]]:
@@ -187,7 +215,16 @@ def run_backtest(
     request: BaseBacktestRequest,
     strategy_params: dict[str, Any],
 ) -> dict[str, Any]:
-    data = ensure_data(request.ticker, request.start_date, request.end_date)
+    data = ensure_data(
+        request.ticker,
+        request.start_date,
+        request.end_date,
+        market=request.market,
+        krx_exchange=request.krx_exchange,
+    )
+    resolved_ticker = data.attrs.get("resolved_ticker", request.ticker)
+    resolved_market = data.attrs.get("market", request.market)
+    resolved_exchange = data.attrs.get("krx_exchange", request.krx_exchange)
     signals = strategy_func(data.copy(), **strategy_params)
     portfolio_history, trades, performance_metrics = backtest_strategy(
         signals,
@@ -204,6 +241,9 @@ def run_backtest(
     return normalize_value(
         {
             "ticker": request.ticker,
+            "resolved_ticker": resolved_ticker,
+            "market": resolved_market,
+            "krx_exchange": resolved_exchange,
             "strategy_params": strategy_params,
             "performance_metrics": performance_metrics,
             "benchmark_metrics": benchmark_metrics,
@@ -220,7 +260,13 @@ def run_optimization(
     request: BaseOptimizationRequest,
     param_grid: dict[str, list[int | float]],
 ) -> dict[str, Any]:
-    data = ensure_data(request.ticker, request.start_date, request.end_date)
+    data = ensure_data(
+        request.ticker,
+        request.start_date,
+        request.end_date,
+        market=request.market,
+        krx_exchange=request.krx_exchange,
+    )
     results = optimizer.grid_search_optimizer(
         strategy_name=strategy_name,
         data=data,
@@ -230,6 +276,10 @@ def run_optimization(
         order_type=request.order_type,
         fixed_amount=request.fixed_amount or request.initial_capital,
     )
+    results["ticker"] = request.ticker
+    results["resolved_ticker"] = data.attrs.get("resolved_ticker", request.ticker)
+    results["market"] = data.attrs.get("market", request.market)
+    results["krx_exchange"] = data.attrs.get("krx_exchange", request.krx_exchange)
     return normalize_value(results)
 
 
@@ -238,11 +288,38 @@ def root() -> dict[str, str]:
     return {"message": "Quant Trading API is running."}
 
 
+@app.get("/stocks/krx/search")
+def krx_stock_search(q: str, limit: int = 20) -> dict[str, Any]:
+    query = q.strip()
+    if not query:
+        return {"query": "", "results": []}
+    if limit < 1 or limit > 50:
+        raise HTTPException(status_code=400, detail="limit must be between 1 and 50")
+
+    try:
+        results = search_krx_stocks(query, limit=limit)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"국내 종목 목록을 불러오지 못했습니다: {exc}") from exc
+
+    return {"query": query, "results": results}
+
+
 @app.get("/stock/{ticker}")
-def stock_data(ticker: str, start_date: str, end_date: str) -> dict[str, Any]:
-    data = ensure_data(ticker.strip().upper(), start_date, end_date)
+def stock_data(
+    ticker: str,
+    start_date: str,
+    end_date: str,
+    market: str = "us",
+    krx_exchange: str = "auto",
+) -> dict[str, Any]:
+    normalized_ticker = normalize_ticker_input(ticker)
+    market, krx_exchange = validate_market_params(market, krx_exchange)
+    data = ensure_data(normalized_ticker, start_date, end_date, market=market, krx_exchange=krx_exchange)
     return {
-        "ticker": ticker.strip().upper(),
+        "ticker": normalized_ticker,
+        "resolved_ticker": data.attrs.get("resolved_ticker", normalized_ticker),
+        "market": data.attrs.get("market", market),
+        "krx_exchange": data.attrs.get("krx_exchange", krx_exchange),
         "rows": serialize_portfolio(data),
     }
 
@@ -262,12 +339,20 @@ def usdkrw_rate() -> dict[str, Any]:
 
 
 @app.get("/sentiment/{ticker}")
-def sentiment_analysis(ticker: str) -> dict[str, Any]:
-    normalized_ticker = ticker.strip().upper()
-    articles = list(gemini_analyzer.get_news(normalized_ticker))
+def sentiment_analysis(ticker: str, market: str = "us", krx_exchange: str = "auto") -> dict[str, Any]:
+    normalized_ticker = normalize_ticker_input(ticker)
+    normalized_market, normalized_exchange = validate_market_params(market, krx_exchange)
+    profile = get_symbol_profile(normalized_ticker, market=normalized_market, krx_exchange=normalized_exchange)
+    news_query = profile.get("name") or normalized_ticker
+    language = "ko" if profile.get("market") == "krx" else "en"
+    articles = list(gemini_analyzer.get_news(news_query, language=language))
     if not articles:
         return {
             "ticker": normalized_ticker,
+            "resolved_ticker": profile.get("resolved_ticker", normalized_ticker),
+            "market": profile.get("market", normalized_market),
+            "krx_exchange": profile.get("krx_exchange", normalized_exchange),
+            "company_name": profile.get("name"),
             "sentiment_score": 50,
             "summary": "분석할 최신 뉴스를 찾지 못했거나 API 키가 설정되지 않았습니다.",
             "articles": [],
@@ -284,6 +369,10 @@ def sentiment_analysis(ticker: str) -> dict[str, Any]:
         }
 
     result["ticker"] = normalized_ticker
+    result["resolved_ticker"] = profile.get("resolved_ticker", normalized_ticker)
+    result["market"] = profile.get("market", normalized_market)
+    result["krx_exchange"] = profile.get("krx_exchange", normalized_exchange)
+    result["company_name"] = profile.get("name")
     result["articles"] = result.get("articles", articles)
     return normalize_value(result)
 

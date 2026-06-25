@@ -3,6 +3,7 @@ import math
 import pandas as pd
 import streamlit as st
 from fx_utils import get_usdkrw_rate, format_currency_pair
+from market_utils import format_market_amount, market_display_name
 
 FX_RATE = get_usdkrw_rate()
 DEFAULT_PLAN_RULES = {
@@ -304,7 +305,7 @@ with tab3:
     st.subheader("실제 주문은 이렇게 넣습니다")
     st.markdown("""
     1. **티커 확인**
-       예: `AAPL`, `MSFT`, `NVDA`. 비슷한 티커 오입력 주의.
+       예: `AAPL`, `MSFT`, `005930`, `000660`. 비슷한 티커/종목코드 오입력 주의.
     2. **수량 또는 금액 확인**
        몇 주를 살지, 얼마만큼만 살지 먼저 정합니다.
     3. **주문 방식 선택**
@@ -354,6 +355,7 @@ with tab3:
 
 with tab4:
     st.subheader("매수 가능 수량 계산기")
+    calculator_market = st.radio("계산할 시장", ["us", "krx"], format_func=market_display_name, horizontal=True)
     budget = st.number_input("이번 주문에 쓸 금액", min_value=0.0, value=200.0, step=10.0)
     price = st.number_input("현재 또는 지정가", min_value=0.01, value=95.0, step=0.1)
     fee_pct = st.number_input("수수료 비율 (%)", min_value=0.0, value=0.10, step=0.01)
@@ -365,14 +367,14 @@ with tab4:
 
     c1, c2, c3 = st.columns(3)
     c1.metric("매수 가능 수량", f"{max_shares}주")
-    c2.metric("예상 총 주문금액", format_currency_pair(estimated_total, FX_RATE["rate"] if FX_RATE else None))
-    c3.metric("남는 현금", format_currency_pair(estimated_cash_left, FX_RATE["rate"] if FX_RATE else None))
+    c2.metric("예상 총 주문금액", format_market_amount(estimated_total, calculator_market, FX_RATE["rate"] if FX_RATE else None))
+    c3.metric("남는 현금", format_market_amount(estimated_cash_left, calculator_market, FX_RATE["rate"] if FX_RATE else None))
 
     st.subheader("분할매수 기준 예시")
     total_budget = st.number_input("전체 투자 예정 금액", min_value=0.0, value=1000.0, step=50.0)
     split_count = st.selectbox("몇 번에 나눌지", [2, 3, 4, 5], index=1)
     per_order = total_budget / split_count if split_count else 0
-    st.write(f"한 번당 약 `{format_currency_pair(per_order, FX_RATE['rate'] if FX_RATE else None)}`씩 나눠서 매수하는 방식으로 사용할 수 있습니다.")
+    st.write(f"한 번당 약 `{format_market_amount(per_order, calculator_market, FX_RATE['rate'] if FX_RATE else None)}`씩 나눠서 매수하는 방식으로 사용할 수 있습니다.")
 
     st.caption("분할매수는 손실을 막아주지는 않지만, 한 번에 진입하는 부담을 줄이는 데 도움이 됩니다.")
 
@@ -446,6 +448,7 @@ with tab7:
     backtest_context = st.session_state.get("last_backtest_context", {})
     ticker = st.session_state.get("ticker_backtest")
     strategy = st.session_state.get("last_run_strategy")
+    backtest_market = backtest_context.get("market", st.session_state.get("market_backtest", "us"))
 
     if not backtest_results or last_run_mode != "일반 백테스트":
         st.info("""
@@ -471,6 +474,7 @@ with tab7:
         info1.metric("종목", ticker or "-")
         info2.metric("전략", strategy or "-")
         info3.metric("실행 모드", backtest_context.get("mode", last_run_mode))
+        st.caption(f"시장: {market_display_name(backtest_market)} | 조회 심볼: {backtest_context.get('resolved_ticker', ticker or '-')}")
 
         st.caption(
             f"기간: {backtest_context.get('start_date', '-')} ~ {backtest_context.get('end_date', '-')} | "
@@ -503,7 +507,7 @@ with tab7:
             key="guide_capital",
         )
         guide_price = st.number_input(
-            "예상 매수가 (현재가 또는 지정가, USD)",
+            "예상 매수가 (현재가 또는 지정가, KRW)" if backtest_market == "krx" else "예상 매수가 (현재가 또는 지정가, USD)",
             min_value=0.01,
             value=95.0,
             step=0.1,
@@ -527,8 +531,8 @@ with tab7:
         max_position_shares = dollars_to_shares(max_position_amount, guide_price, fee_rate)
 
         col1, col2, col3 = st.columns(3)
-        col1.metric("1회 주문 한도", format_currency_pair(single_order_amount, FX_RATE["rate"] if FX_RATE else None))
-        col2.metric("최대 보유 한도", format_currency_pair(max_position_amount, FX_RATE["rate"] if FX_RATE else None))
+        col1.metric("1회 주문 한도", format_market_amount(single_order_amount, backtest_market, FX_RATE["rate"] if FX_RATE else None))
+        col2.metric("최대 보유 한도", format_market_amount(max_position_amount, backtest_market, FX_RATE["rate"] if FX_RATE else None))
         col3.metric("분할 횟수", f"{plan['split_count']}회")
 
         col4, col5, col6 = st.columns(3)

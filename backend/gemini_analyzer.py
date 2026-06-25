@@ -37,23 +37,24 @@ class SentimentAnalysisResult(BaseModel):
 
 
 @lru_cache(maxsize=32)
-def get_news(ticker: str, language: str = 'en', page_size: int = 10):
+def get_news(query: str, language: str = 'en', page_size: int = 10):
     """
     NewsAPI를 사용하여 최신 뉴스를 가져오고, 결과를 캐싱합니다.
     """
     if not NEWS_API_KEY:
         return tuple()
-    # ... (이하 get_news 함수 내용은 이전과 동일)
-    url = (
-        'https://newsapi.org/v2/everything?'
-        f'q={ticker}&'
-        f'language={language}&'
-        'sortBy=publishedAt&'
-        f'pageSize={page_size}&'
-        f'apiKey={NEWS_API_KEY}'
-    )
     try:
-        response = requests.get(url, timeout=10)
+        response = requests.get(
+            "https://newsapi.org/v2/everything",
+            params={
+                "q": query,
+                "language": language,
+                "sortBy": "publishedAt",
+                "pageSize": page_size,
+                "apiKey": NEWS_API_KEY,
+            },
+            timeout=10,
+        )
         response.raise_for_status()
         data = response.json()
         articles = data.get("articles", [])

@@ -3,24 +3,108 @@ import requests
 import pandas as pd
 import plotly.express as px
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
+from market_utils import (
+    KRX_EXCHANGE_OPTIONS,
+    MARKET_OPTIONS,
+    default_ticker_for_market,
+    fixed_amount_label,
+    format_market_amount,
+    get_common_krx_companies,
+    initial_capital_label,
+    market_display_name,
+    search_krx_companies,
+    ticker_help_text,
+    ticker_input_label,
+)
+from fx_utils import get_usdkrw_rate
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000")
+FX_RATE = get_usdkrw_rate()
+DEFAULT_END_DATE = datetime.now().date()
+DEFAULT_START_DATE = DEFAULT_END_DATE - timedelta(days=365)
 
 st.set_page_config(layout="wide", page_title="투자 전략 시뮬레이션")
 
 st.title("📈 투자 전략 시뮬레이션")
-st.write("과거 데이터를 기반으로, 다양한 투자 전략이 어떤 성과를 냈을지 테스트해볼 수 있습니다.")
+st.write("과거 데이터를 기반으로, 미국주식과 국내주식에 다양한 투자 전략을 적용했을 때 어떤 성과를 냈을지 테스트해볼 수 있습니다.")
 
 # --- Sidebar for All Controls ---
 st.sidebar.header("백테스트 설정")
 
 mode = st.sidebar.radio("모드 선택", ["일반 백테스트", "전략 최적화"], help="일반 백테스트는 단일 파라미터로 시뮬레이션하고, 전략 최적화는 여러 파라미터 조합 중 최적의 조합을 찾아줍니다.")
 
-ticker_backtest = st.sidebar.text_input("주식 티커", "AAPL", help="백테스트를 실행할 주식의 티커를 입력하세요.")
-start_date = st.sidebar.date_input("시작일", pd.to_datetime("2023-01-01"))
-end_date = st.sidebar.date_input("종료일", pd.to_datetime("2023-12-31"))
-initial_capital = st.sidebar.number_input("초기 투자금 ($)", 1000, 10000000, 100000, format="%d", help="시뮬레이션을 시작할 가상의 투자 원금입니다.")
+market = st.sidebar.radio("시장", list(MARKET_OPTIONS.keys()), format_func=lambda x: MARKET_OPTIONS[x], horizontal=True)
+if st.session_state.get("ticker_backtest_market") != market:
+    st.session_state["ticker_backtest_input"] = default_ticker_for_market(market)
+    st.session_state["ticker_backtest_market"] = market
+
+krx_exchange = "auto"
+if market == "krx":
+    quick_pick_options = get_common_krx_companies()
+    selected_quick_pick = st.sidebar.selectbox(
+        "대표 국내 종목 빠른 선택",
+        ["직접 입력"] + [item["display_name"] for item in quick_pick_options],
+        key="ticker_quick_pick_backtest",
+        help="드롭다운을 열고 종목명을 타이핑하면 빠르게 찾을 수 있습니다.",
+    )
+    if selected_quick_pick != "직접 입력":
+        selected_company = next(item for item in quick_pick_options if item["display_name"] == selected_quick_pick)
+        st.session_state["ticker_backtest_input"] = selected_company["ticker"]
+
+    krx_exchange = st.sidebar.selectbox(
+        "국내 거래소",
+        list(KRX_EXCHANGE_OPTIONS.keys()),
+        format_func=lambda x: KRX_EXCHANGE_OPTIONS[x],
+        help="6자리 종목코드만 입력하면 자동 판별을 우선 시도합니다.",
+    )
+    ticker_search_query = st.sidebar.text_input(
+        "국내 종목명 검색",
+        key="ticker_search_backtest",
+        help="회사명이나 6자리 종목코드를 입력하세요. 예: 삼성전자, 005930",
+    )
+    if ticker_search_query.strip():
+        try:
+            ticker_search_results = search_krx_companies(ticker_search_query, limit=20)
+        except requests.exceptions.RequestException:
+            ticker_search_results = []
+        if ticker_search_results:
+            selected_display_name = st.sidebar.selectbox(
+                "검색 결과",
+                [item["display_name"] for item in ticker_search_results],
+                key="ticker_search_result_backtest",
+            )
+            selected_company = next(
+                item for item in ticker_search_results if item["display_name"] == selected_display_name
+            )
+            st.session_state["ticker_backtest_input"] = selected_company["ticker"]
+            st.sidebar.caption(
+                f"선택 종목: {selected_company['name']} / 코드: {selected_company['ticker']} / "
+                f"시장: {selected_company['krx_exchange'].upper()}"
+            )
+            if krx_exchange == "auto":
+                krx_exchange = selected_company["krx_exchange"]
+        else:
+            st.sidebar.caption("검색 결과가 없습니다.")
+
+    if selected_quick_pick != "직접 입력" and krx_exchange == "auto":
+        krx_exchange = selected_company["krx_exchange"]
+
+ticker_backtest = st.sidebar.text_input(
+    ticker_input_label(market),
+    key="ticker_backtest_input",
+    help=ticker_help_text(market),
+)
+start_date = st.sidebar.date_input("시작일", DEFAULT_START_DATE)
+end_date = st.sidebar.date_input("종료일", DEFAULT_END_DATE)
+initial_capital = st.sidebar.number_input(
+    initial_capital_label(market),
+    1000,
+    1000000000,
+    100000 if market == "us" else 1000000,
+    format="%d",
+    help="시뮬레이션을 시작할 가상의 투자 원금입니다.",
+)
 
 order_type = st.sidebar.radio(
     "주문 방식",
@@ -30,7 +114,13 @@ order_type = st.sidebar.radio(
 )
 fixed_amount = None
 if order_type == 'fixed_amount':
-    fixed_amount = st.sidebar.number_input("1회 매수 금액 (USD)", 1, 100000, 1000, format="%d")
+    fixed_amount = st.sidebar.number_input(
+        fixed_amount_label(market),
+        1,
+        100000000,
+        1000 if market == "us" else 100000,
+        format="%d",
+    )
 
 strategy = st.sidebar.selectbox("전략 선택", ["이동평균", "RSI", "볼린저 밴드"])
 
@@ -113,6 +203,8 @@ elif strategy == "볼린저 밴드":
 if st.sidebar.button("실행"):
     common_payload = {
         "ticker": ticker_backtest,
+        "market": market,
+        "krx_exchange": krx_exchange,
         "start_date": start_date.strftime("%Y-%m-%d"),
         "end_date": end_date.strftime("%Y-%m-%d"),
         "initial_capital": initial_capital,
@@ -140,10 +232,15 @@ if st.sidebar.button("실행"):
             results = response.json()
             st.session_state["last_run_mode"] = mode
             st.session_state["ticker_backtest"] = ticker_backtest
+            st.session_state["market_backtest"] = market
+            st.session_state["krx_exchange_backtest"] = krx_exchange
             st.session_state["last_run_strategy"] = strategy
             st.session_state["initial_capital"] = float(initial_capital)
             st.session_state["last_backtest_context"] = {
                 "ticker": ticker_backtest,
+                "market": market,
+                "krx_exchange": krx_exchange,
+                "resolved_ticker": results.get("resolved_ticker", ticker_backtest),
                 "strategy": strategy,
                 "mode": mode,
                 "start_date": start_date.strftime("%Y-%m-%d"),
@@ -158,6 +255,11 @@ if st.sidebar.button("실행"):
                 st.session_state["backtest_results"] = results
 
                 st.header(f"📊 '{strategy}' 전략 시뮬레이션 결과")
+                st.caption(
+                    f"대상 시장: {market_display_name(results.get('market', market))} | "
+                    f"입력 종목: {results.get('ticker', ticker_backtest)} | "
+                    f"실제 조회 심볼: {results.get('resolved_ticker', ticker_backtest)}"
+                )
                 st.subheader("📈 주요 성과 지표")
                 metrics = results.get("performance_metrics", {})
                 benchmark_metrics = results.get("benchmark_metrics", {})
@@ -167,7 +269,14 @@ if st.sidebar.button("실행"):
                 col1.metric("총수익률", f"{metrics.get('total_return_pct', 0):.2f}%")
                 col2.metric("샤프 지수", f"{metrics.get('sharpe_ratio', 0):.2f}")
                 col3.metric("최대 낙폭", f"{metrics.get('max_drawdown_pct', 0):.2f}%")
-                col4.metric("최종 자산", f"${metrics.get('final_total_value', 0):,.2f}")
+                col4.metric(
+                    "최종 자산",
+                    format_market_amount(
+                        metrics.get("final_total_value", 0),
+                        results.get("market", market),
+                        FX_RATE["rate"] if FX_RATE else None,
+                    ),
+                )
                 st.text(f"총 거래 횟수: {metrics.get('total_trades', 0)}회")
 
                 st.subheader("📌 전략 vs 단순 보유")
@@ -216,5 +325,10 @@ if st.sidebar.button("실행"):
                     st.info("최적화 결과가 없습니다.")
         except requests.exceptions.RequestException as e:
             st.error(f"백엔드 서버 연결에 실패했습니다: {e}")
+            if getattr(e, "response", None) is not None:
+                try:
+                    st.error(e.response.json().get("detail", ""))
+                except Exception:
+                    pass
         except Exception as e:
             st.error(f"오류가 발생했습니다: {e}")
