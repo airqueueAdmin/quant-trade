@@ -62,6 +62,35 @@ def get_news(query: str, language: str = 'en', page_size: int = 10):
     except requests.exceptions.RequestException:
         return tuple()
 
+
+def get_news_candidates(company_name: str | None, ticker: str, market: str, page_size: int = 10) -> tuple[tuple[dict, ...], list[dict[str, str]]]:
+    queries: list[tuple[str, str]] = []
+    normalized_ticker = str(ticker).strip().upper()
+    normalized_name = str(company_name).strip() if company_name else ""
+
+    if normalized_name:
+        queries.append((normalized_name, "ko" if market == "krx" else "en"))
+        queries.append((normalized_name, "en"))
+        queries.append((f'"{normalized_name}"', "ko" if market == "krx" else "en"))
+
+    if normalized_ticker:
+        queries.append((normalized_ticker, "ko" if market == "krx" else "en"))
+        queries.append((f"{normalized_name} {normalized_ticker}".strip(), "ko" if market == "krx" else "en"))
+
+    seen: set[tuple[str, str]] = set()
+    attempted: list[dict[str, str]] = []
+    for query, language in queries:
+        key = (query, language)
+        if key in seen:
+            continue
+        seen.add(key)
+        attempted.append({"query": query, "language": language})
+        articles = get_news(query, language=language, page_size=page_size)
+        if articles:
+            return articles, attempted
+
+    return tuple(), attempted
+
 @lru_cache(maxsize=32)
 def analyze_sentiment_with_gemini(articles_json: str):
     """

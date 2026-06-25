@@ -2,6 +2,7 @@ import streamlit as st
 import requests
 import plotly.graph_objects as go
 import os
+from ga import inject_google_analytics
 from market_utils import (
     KRX_EXCHANGE_OPTIONS,
     MARKET_OPTIONS,
@@ -16,6 +17,7 @@ from market_utils import (
 BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000")
 
 st.set_page_config(layout="wide", page_title="AI 시장 분석")
+inject_google_analytics(os.getenv("GA_MEASUREMENT_ID"), "ai_analysis")
 
 st.title("🤖 AI 시장 분석")
 st.write("최신 뉴스를 기반으로, 미국주식과 국내주식에 대한 시장의 감정을 분석해 드립니다.")
@@ -122,11 +124,16 @@ if st.session_state.step_ai >= 2:
             score = sentiment_results.get('sentiment_score', 50)
             company_name = sentiment_results.get("company_name")
             resolved_ticker = sentiment_results.get("resolved_ticker", st.session_state["ticker_sentiment"])
+            news_api_enabled = sentiment_results.get("news_api_enabled", True)
+            attempted_queries = sentiment_results.get("attempted_queries", [])
 
             if company_name:
                 st.caption(f"분석 대상: {company_name} ({resolved_ticker})")
             else:
                 st.caption(f"분석 대상 심볼: {resolved_ticker}")
+
+            if not news_api_enabled:
+                st.warning("백엔드에 `NEWS_API_KEY`가 설정되지 않아 최신 뉴스 수집을 할 수 없습니다.")
 
             fig = go.Figure(go.Indicator(
                 mode = "gauge+number", value = score,
@@ -144,6 +151,10 @@ if st.session_state.step_ai >= 2:
             st.subheader("📰 관련 뉴스 목록")
             for article in sentiment_results.get('articles', []):
                 st.markdown(f"- [{article['title']}]({article['url']})")
+
+            if attempted_queries and not sentiment_results.get("articles"):
+                with st.expander("시도한 뉴스 검색 조건"):
+                    st.json(attempted_queries)
 
         except requests.exceptions.RequestException as e:
             st.error(f"백엔드 서버 연결에 실패했습니다: {e}")

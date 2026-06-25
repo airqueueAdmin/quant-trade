@@ -358,10 +358,16 @@ def sentiment_analysis(ticker: str, market: str = "us", krx_exchange: str = "aut
     normalized_ticker = normalize_ticker_input(ticker)
     normalized_market, normalized_exchange = validate_market_params(market, krx_exchange)
     profile = get_symbol_profile(normalized_ticker, market=normalized_market, krx_exchange=normalized_exchange)
-    news_query = profile.get("name") or normalized_ticker
-    language = "ko" if profile.get("market") == "krx" else "en"
-    articles = list(gemini_analyzer.get_news(news_query, language=language))
+    articles, attempted_queries = gemini_analyzer.get_news_candidates(
+        company_name=profile.get("name"),
+        ticker=profile.get("resolved_ticker", normalized_ticker),
+        market=profile.get("market", normalized_market),
+    )
     if not articles:
+        if not gemini_analyzer.NEWS_API_KEY:
+            summary = "백엔드에 NEWS_API_KEY가 설정되지 않았습니다."
+        else:
+            summary = "국내 종목 뉴스 검색 결과가 없습니다. 회사명과 종목코드로 여러 번 재시도했지만 최신 뉴스를 찾지 못했습니다."
         return {
             "ticker": normalized_ticker,
             "resolved_ticker": profile.get("resolved_ticker", normalized_ticker),
@@ -369,8 +375,10 @@ def sentiment_analysis(ticker: str, market: str = "us", krx_exchange: str = "aut
             "krx_exchange": profile.get("krx_exchange", normalized_exchange),
             "company_name": profile.get("name"),
             "sentiment_score": 50,
-            "summary": "분석할 최신 뉴스를 찾지 못했거나 API 키가 설정되지 않았습니다.",
+            "summary": summary,
             "articles": [],
+            "attempted_queries": attempted_queries,
+            "news_api_enabled": bool(gemini_analyzer.NEWS_API_KEY),
         }
 
     try:
@@ -389,6 +397,8 @@ def sentiment_analysis(ticker: str, market: str = "us", krx_exchange: str = "aut
     result["krx_exchange"] = profile.get("krx_exchange", normalized_exchange)
     result["company_name"] = profile.get("name")
     result["articles"] = result.get("articles", articles)
+    result["attempted_queries"] = attempted_queries
+    result["news_api_enabled"] = bool(gemini_analyzer.NEWS_API_KEY)
     return normalize_value(result)
 
 

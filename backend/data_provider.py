@@ -155,6 +155,25 @@ def search_krx_stocks(query: str, limit: int = 20) -> list[dict[str, str]]:
     ]
 
 
+def get_krx_stock_by_ticker(ticker: str) -> dict[str, str] | None:
+    normalized_ticker = re.sub(r"\D", "", normalize_ticker_input(ticker))
+    if not re.fullmatch(r"\d{6}", normalized_ticker):
+        return None
+
+    listing = get_krx_listing().copy()
+    matched = listing.loc[listing["종목코드"] == normalized_ticker]
+    if matched.empty:
+        return None
+
+    row = matched.iloc[0]
+    return {
+        "name": row["회사명"],
+        "ticker": row["종목코드"],
+        "krx_exchange": row["krx_exchange"],
+        "display_name": row["display_name"],
+    }
+
+
 def _download_symbol(symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
     raw_data = yf.download(
         symbol,
@@ -205,6 +224,17 @@ def get_stock_data(
 @lru_cache(maxsize=64)
 def get_symbol_profile(ticker: str, market: str = "us", krx_exchange: str = "auto") -> dict[str, Any]:
     candidates = build_symbol_candidates(ticker, market=market, krx_exchange=krx_exchange)
+
+    if normalize_market(market) == "krx":
+        local_krx = get_krx_stock_by_ticker(ticker)
+        if local_krx:
+            return {
+                "ticker": normalize_ticker_input(ticker),
+                "resolved_ticker": local_krx["ticker"],
+                "name": local_krx["name"],
+                "market": "krx",
+                "krx_exchange": local_krx["krx_exchange"],
+            }
 
     for candidate in candidates:
         try:

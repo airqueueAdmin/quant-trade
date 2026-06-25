@@ -1,8 +1,10 @@
 import math
 
+import os
 import pandas as pd
 import streamlit as st
 from fx_utils import get_usdkrw_rate, format_currency_pair
+from ga import inject_google_analytics
 from market_utils import format_market_amount, market_display_name
 
 FX_RATE = get_usdkrw_rate()
@@ -17,6 +19,7 @@ DEFAULT_PLAN_RULES = {
 }
 
 st.set_page_config(layout="wide", page_title="실전 매매 가이드")
+inject_google_analytics(os.getenv("GA_MEASUREMENT_ID"), "trade_guide")
 if FX_RATE:
     st.caption(f"환율 기준: 1 USD = {FX_RATE['rate']:,.2f} KRW")
 

@@ -1,11 +1,14 @@
 import math
 
+import os
 import streamlit as st
 from fx_utils import get_usdkrw_rate, format_currency_pair, format_krw_value
+from ga import inject_google_analytics
 
 FX_RATE = get_usdkrw_rate()
 
 st.set_page_config(layout="wide", page_title="소액투자 ETF 가이드")
+inject_google_analytics(os.getenv("GA_MEASUREMENT_ID"), "etf_guide")
 
 
 def estimate_shares(budget, price):

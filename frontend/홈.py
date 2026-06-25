@@ -1,10 +1,14 @@
 import streamlit as st
+import os
+from ga import inject_google_analytics
 
 st.set_page_config(
     page_title="홈",
     page_icon="🚀",
     layout="wide"
 )
+
+inject_google_analytics(os.getenv("GA_MEASUREMENT_ID"), "home")
 
 st.title("🚀 홈")
 st.sidebar.success("왼쪽 메뉴를 선택하세요.")
