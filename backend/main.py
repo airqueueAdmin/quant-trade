@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date, timedelta
 from typing import Any, Iterable
 import json
 
@@ -25,6 +26,93 @@ from strategies.moving_average import moving_average_cross_strategy
 from strategies.rsi import rsi_strategy
 
 app = FastAPI(title="Quant Trading API")
+
+US_SECTOR_UNIVERSE = [
+    {"key": "technology", "name": "기술", "proxy": "XLK", "components": [{"ticker": "XLK", "name": "Technology Select Sector SPDR Fund"}], "note": "미국 대형 기술주 ETF"},
+    {"key": "semiconductors", "name": "반도체", "proxy": "SOXX", "components": [{"ticker": "SOXX", "name": "iShares Semiconductor ETF"}], "note": "미국 반도체 ETF"},
+    {"key": "communication", "name": "커뮤니케이션", "proxy": "XLC", "components": [{"ticker": "XLC", "name": "Communication Services Select Sector SPDR Fund"}], "note": "미국 커뮤니케이션 ETF"},
+    {"key": "consumer_discretionary", "name": "소비재", "proxy": "XLY", "components": [{"ticker": "XLY", "name": "Consumer Discretionary Select Sector SPDR Fund"}], "note": "미국 경기민감 소비 ETF"},
+    {"key": "financials", "name": "금융", "proxy": "XLF", "components": [{"ticker": "XLF", "name": "Financial Select Sector SPDR Fund"}], "note": "미국 금융 ETF"},
+    {"key": "industrials", "name": "산업재", "proxy": "XLI", "components": [{"ticker": "XLI", "name": "Industrial Select Sector SPDR Fund"}], "note": "미국 산업재 ETF"},
+    {"key": "healthcare", "name": "헬스케어", "proxy": "XLV", "components": [{"ticker": "XLV", "name": "Health Care Select Sector SPDR Fund"}], "note": "미국 헬스케어 ETF"},
+    {"key": "energy", "name": "에너지", "proxy": "XLE", "components": [{"ticker": "XLE", "name": "Energy Select Sector SPDR Fund"}], "note": "미국 에너지 ETF"},
+    {"key": "utilities", "name": "유틸리티", "proxy": "XLU", "components": [{"ticker": "XLU", "name": "Utilities Select Sector SPDR Fund"}], "note": "미국 유틸리티 ETF"},
+    {"key": "real_estate", "name": "리츠/부동산", "proxy": "XLRE", "components": [{"ticker": "XLRE", "name": "Real Estate Select Sector SPDR Fund"}], "note": "미국 부동산 ETF"},
+    {"key": "materials", "name": "소재", "proxy": "XLB", "components": [{"ticker": "XLB", "name": "Materials Select Sector SPDR Fund"}], "note": "미국 소재 ETF"},
+]
+
+KRX_SECTOR_UNIVERSE = [
+    {
+        "key": "semiconductors",
+        "name": "반도체",
+        "components": [
+            {"ticker": "005930", "name": "삼성전자", "krx_exchange": "kospi"},
+            {"ticker": "000660", "name": "SK하이닉스", "krx_exchange": "kospi"},
+            {"ticker": "042700", "name": "한미반도체", "krx_exchange": "kospi"},
+        ],
+        "note": "국내 대표 반도체 3종목 평균",
+    },
+    {
+        "key": "secondary_battery",
+        "name": "2차전지",
+        "components": [
+            {"ticker": "373220", "name": "LG에너지솔루션", "krx_exchange": "kospi"},
+            {"ticker": "006400", "name": "삼성SDI", "krx_exchange": "kospi"},
+            {"ticker": "003670", "name": "포스코퓨처엠", "krx_exchange": "kospi"},
+        ],
+        "note": "국내 대표 2차전지 3종목 평균",
+    },
+    {
+        "key": "autos",
+        "name": "자동차",
+        "components": [
+            {"ticker": "005380", "name": "현대차", "krx_exchange": "kospi"},
+            {"ticker": "000270", "name": "기아", "krx_exchange": "kospi"},
+            {"ticker": "012330", "name": "현대모비스", "krx_exchange": "kospi"},
+        ],
+        "note": "국내 대표 자동차 3종목 평균",
+    },
+    {
+        "key": "bio",
+        "name": "바이오",
+        "components": [
+            {"ticker": "207940", "name": "삼성바이오로직스", "krx_exchange": "kospi"},
+            {"ticker": "068270", "name": "셀트리온", "krx_exchange": "kospi"},
+            {"ticker": "196170", "name": "알테오젠", "krx_exchange": "kosdaq"},
+        ],
+        "note": "국내 대표 바이오 3종목 평균",
+    },
+    {
+        "key": "internet_platform",
+        "name": "인터넷/플랫폼",
+        "components": [
+            {"ticker": "035420", "name": "NAVER", "krx_exchange": "kospi"},
+            {"ticker": "035720", "name": "카카오", "krx_exchange": "kospi"},
+            {"ticker": "251270", "name": "넷마블", "krx_exchange": "kospi"},
+        ],
+        "note": "국내 플랫폼/콘텐츠 대표주 평균",
+    },
+    {
+        "key": "defense",
+        "name": "방산",
+        "components": [
+            {"ticker": "012450", "name": "한화에어로스페이스", "krx_exchange": "kospi"},
+            {"ticker": "047810", "name": "한국항공우주", "krx_exchange": "kospi"},
+            {"ticker": "079550", "name": "LIG넥스원", "krx_exchange": "kospi"},
+        ],
+        "note": "국내 대표 방산 3종목 평균",
+    },
+    {
+        "key": "financials",
+        "name": "금융",
+        "components": [
+            {"ticker": "105560", "name": "KB금융", "krx_exchange": "kospi"},
+            {"ticker": "055550", "name": "신한지주", "krx_exchange": "kospi"},
+            {"ticker": "086790", "name": "하나금융지주", "krx_exchange": "kospi"},
+        ],
+        "note": "국내 대표 금융지주 3종목 평균",
+    },
+]
 
 
 class BaseBacktestRequest(BaseModel):
@@ -210,6 +298,264 @@ def build_comparison_metrics(strategy_metrics: dict[str, Any], benchmark_metrics
     }
 
 
+def sector_market_name(market: str) -> str:
+    return "국내" if market == "krx" else "미국"
+
+
+def calculate_return_pct(series: pd.Series, lookback: int) -> float | None:
+    clean = series.dropna().astype(float)
+    if len(clean) <= lookback:
+        return None
+
+    latest = float(clean.iloc[-1])
+    reference = float(clean.iloc[-(lookback + 1)])
+    if reference == 0:
+        return None
+    return ((latest / reference) - 1) * 100
+
+
+def calculate_moving_average(series: pd.Series, window: int) -> float | None:
+    clean = series.dropna().astype(float)
+    if len(clean) < window:
+        return None
+    return float(clean.tail(window).mean())
+
+
+def calculate_trend_score(metrics: dict[str, float | None]) -> float:
+    weights = {
+        "return_1d_pct": 0.10,
+        "return_5d_pct": 0.20,
+        "return_21d_pct": 0.30,
+        "return_63d_pct": 0.40,
+    }
+    score = 0.0
+    for key, weight in weights.items():
+        score += float(metrics.get(key) or 0.0) * weight
+    return score
+
+
+def classify_sector_trend(
+    trend_score: float,
+    return_21d_pct: float | None,
+    return_63d_pct: float | None,
+    above_20dma: bool,
+    above_60dma: bool,
+) -> str:
+    month = float(return_21d_pct or 0.0)
+    quarter = float(return_63d_pct or 0.0)
+
+    if above_20dma and above_60dma and trend_score >= 8 and month >= 4:
+        return "강한 상승 추세"
+    if above_20dma and trend_score >= 2 and month >= 0:
+        return "상승 우위"
+    if month >= 0 or quarter >= 0:
+        return "반등/혼조"
+    if not above_20dma and not above_60dma and trend_score <= -5:
+        return "약세 지속"
+    return "조정 구간"
+
+
+def load_close_series(
+    ticker: str,
+    start_date: str,
+    end_date: str,
+    market: str = "us",
+    krx_exchange: str = "auto",
+) -> pd.Series:
+    try:
+        data = get_stock_data(
+            ticker,
+            start_date,
+            end_date,
+            market=market,
+            krx_exchange=krx_exchange,
+        )
+    except Exception:
+        return pd.Series(dtype=float)
+
+    if data.empty or "Close" not in data.columns:
+        return pd.Series(dtype=float)
+
+    return data["Close"].dropna().astype(float).copy()
+
+
+def build_equal_weight_basket(component_series: list[pd.Series]) -> pd.Series:
+    normalized_series: list[pd.Series] = []
+    for index, series in enumerate(component_series):
+        clean = series.dropna().astype(float)
+        if len(clean) < 2:
+            continue
+        normalized = (clean / float(clean.iloc[0])) * 100.0
+        normalized.name = f"component_{index}"
+        normalized_series.append(normalized)
+
+    if not normalized_series:
+        return pd.Series(dtype=float)
+
+    basket = pd.concat(normalized_series, axis=1).sort_index().ffill().mean(axis=1, skipna=True).dropna()
+    basket.name = "equal_weight_basket"
+    return basket.astype(float)
+
+
+def build_sector_row(
+    key: str,
+    name: str,
+    note: str,
+    proxy_type: str,
+    proxy_label: str,
+    series: pd.Series,
+    components: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    clean = series.dropna().astype(float)
+    if len(clean) < 22:
+        return None
+
+    ma20 = calculate_moving_average(clean, 20)
+    ma60 = calculate_moving_average(clean, 60)
+    latest = float(clean.iloc[-1])
+
+    metrics: dict[str, float | None] = {
+        "return_1d_pct": calculate_return_pct(clean, 1),
+        "return_5d_pct": calculate_return_pct(clean, 5),
+        "return_21d_pct": calculate_return_pct(clean, 21),
+        "return_63d_pct": calculate_return_pct(clean, 63),
+    }
+    trend_score = calculate_trend_score(metrics)
+    above_20dma = bool(ma20 is not None and latest >= ma20)
+    above_60dma = bool(ma60 is not None and latest >= ma60)
+
+    return {
+        "key": key,
+        "name": name,
+        "note": note,
+        "proxy_type": proxy_type,
+        "proxy_label": proxy_label,
+        "components": components,
+        "component_count": len(components),
+        "as_of": clean.index[-1],
+        "latest_level": latest,
+        "ma20_gap_pct": None if ma20 in {None, 0} else ((latest / ma20) - 1) * 100,
+        "ma60_gap_pct": None if ma60 in {None, 0} else ((latest / ma60) - 1) * 100,
+        "above_20dma": above_20dma,
+        "above_60dma": above_60dma,
+        "trend_score": trend_score,
+        "trend_label": classify_sector_trend(
+            trend_score,
+            metrics["return_21d_pct"],
+            metrics["return_63d_pct"],
+            above_20dma,
+            above_60dma,
+        ),
+        **metrics,
+    }
+
+
+def build_us_sector_rows(start_date: str, end_date: str) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for sector in US_SECTOR_UNIVERSE:
+        series = load_close_series(sector["proxy"], start_date, end_date, market="us")
+        row = build_sector_row(
+            key=sector["key"],
+            name=sector["name"],
+            note=sector["note"],
+            proxy_type="etf",
+            proxy_label=sector["proxy"],
+            series=series,
+            components=sector["components"],
+        )
+        if row:
+            rows.append(row)
+    return rows
+
+
+def build_krx_sector_rows(start_date: str, end_date: str) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for sector in KRX_SECTOR_UNIVERSE:
+        component_series: list[pd.Series] = []
+        available_components: list[dict[str, Any]] = []
+        for component in sector["components"]:
+            series = load_close_series(
+                component["ticker"],
+                start_date,
+                end_date,
+                market="krx",
+                krx_exchange=component["krx_exchange"],
+            )
+            if series.empty:
+                continue
+            component_series.append(series)
+            available_components.append(component)
+
+        basket = build_equal_weight_basket(component_series)
+        row = build_sector_row(
+            key=sector["key"],
+            name=sector["name"],
+            note=sector["note"],
+            proxy_type="basket",
+            proxy_label="대표 종목 바스켓",
+            series=basket,
+            components=available_components,
+        )
+        if row:
+            rows.append(row)
+    return rows
+
+
+def summarize_sector_rows(market: str, rows: list[dict[str, Any]]) -> str:
+    if not rows:
+        return "섹터 데이터를 불러오지 못했습니다."
+
+    leaders = ", ".join(item["name"] for item in rows[:3])
+    laggards = ", ".join(item["name"] for item in rows[-2:][::-1])
+    positive_month = sum(1 for item in rows if float(item.get("return_21d_pct") or 0.0) > 0)
+    above_20dma = sum(1 for item in rows if item.get("above_20dma"))
+    market_name = sector_market_name(market)
+
+    return (
+        f"{market_name} 시장에서 최근 1개월 기준 상대적으로 강한 섹터는 {leaders}입니다. "
+        f"약한 흐름은 {laggards} 쪽입니다. "
+        f"{positive_month}/{len(rows)}개 섹터가 최근 1개월 수익률 플러스이고, "
+        f"{above_20dma}/{len(rows)}개 섹터가 20일선 위에 있습니다."
+    )
+
+
+def create_sector_snapshot(market: str) -> dict[str, Any]:
+    normalized_market = normalize_market(market)
+    end_date = date.today() + timedelta(days=1)
+    start_date = end_date - timedelta(days=220)
+
+    if normalized_market == "krx":
+        rows = build_krx_sector_rows(start_date.isoformat(), end_date.isoformat())
+    else:
+        rows = build_us_sector_rows(start_date.isoformat(), end_date.isoformat())
+
+    if not rows:
+        raise HTTPException(status_code=503, detail="섹터 데이터를 가져오지 못했습니다.")
+
+    sorted_rows = sorted(
+        rows,
+        key=lambda item: (
+            float(item.get("trend_score") or 0.0),
+            float(item.get("return_21d_pct") or 0.0),
+            float(item.get("return_5d_pct") or 0.0),
+        ),
+        reverse=True,
+    )
+    as_of = max(item["as_of"] for item in sorted_rows)
+
+    return normalize_value(
+        {
+            "market": normalized_market,
+            "market_name": sector_market_name(normalized_market),
+            "as_of": as_of,
+            "summary": summarize_sector_rows(normalized_market, sorted_rows),
+            "leaders": sorted_rows[:3],
+            "laggards": list(reversed(sorted_rows[-3:])),
+            "sectors": sorted_rows,
+        }
+    )
+
+
 def run_backtest(
     strategy_func,
     request: BaseBacktestRequest,
@@ -351,6 +697,11 @@ def usdkrw_rate() -> dict[str, Any]:
     as_of = close_series.dropna().index[-1]
     rate = float(close_series.dropna().iloc[-1])
     return normalize_value({"rate": rate, "as_of": as_of, "source": "yfinance:KRW=X"})
+
+
+@app.get("/market/sectors")
+def market_sectors(market: str = "us") -> dict[str, Any]:
+    return create_sector_snapshot(market)
 
 
 @app.get("/sentiment/{ticker}")

@@ -1,0 +1,213 @@
+import os
+
+import pandas as pd
+import plotly.express as px
+import requests
+import streamlit as st
+
+from ga import inject_google_analytics
+from market_utils import MARKET_OPTIONS, market_display_name
+
+BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000")
+METRIC_OPTIONS = {
+    "1일 수익률": "1일",
+    "1주 수익률": "1주",
+    "1개월 수익률": "1개월",
+    "3개월 수익률": "3개월",
+    "추세 점수": "추세 점수",
+}
+
+st.set_page_config(layout="wide", page_title="주요 섹터 흐름")
+inject_google_analytics(os.getenv("GA_MEASUREMENT_ID") or os.getenv("GA_TAG_ID"), "sector_flow")
+
+st.markdown(
+    """
+    <style>
+    .sector-card {
+        border: 1px solid rgba(120, 120, 120, 0.25);
+        border-radius: 14px;
+        padding: 1rem;
+        background: rgba(255, 255, 255, 0.02);
+        min-height: 150px;
+    }
+    .sector-card h4 {
+        margin: 0 0 0.35rem 0;
+        font-size: 0.95rem;
+        color: inherit;
+        opacity: 0.72;
+    }
+    .sector-card strong {
+        display: block;
+        font-size: 1.15rem;
+        margin-bottom: 0.35rem;
+        color: inherit;
+    }
+    .sector-card p {
+        margin: 0.15rem 0;
+        line-height: 1.4;
+        color: inherit;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def get_sector_snapshot(market: str) -> dict:
+    response = requests.get(
+        f"{BACKEND_URL}/market/sectors",
+        params={"market": market},
+        timeout=30,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+def format_pct(value: float | None) -> str:
+    if value is None:
+        return "-"
+    return f"{value:+.1f}%"
+
+
+def format_as_of_date(value: str | None) -> str:
+    if not value:
+        return "-"
+    return str(value).split("T", 1)[0]
+
+
+def trend_position_label(flag: bool) -> str:
+    return "위" if flag else "아래"
+
+
+def component_text(components: list[dict]) -> str:
+    if not components:
+        return "-"
+    return ", ".join(f"{item['name']}({item['ticker']})" for item in components)
+
+
+def render_sector_card(column, title: str, sector: dict) -> None:
+    column.markdown(
+        f"""
+        <div class="sector-card">
+            <h4>{title}</h4>
+            <strong>{sector['name']}</strong>
+            <p>{sector['trend_label']}</p>
+            <p>1개월 {format_pct(sector.get('return_21d_pct'))} / 3개월 {format_pct(sector.get('return_63d_pct'))}</p>
+            <p>20일선 {trend_position_label(bool(sector.get('above_20dma')))} / 60일선 {trend_position_label(bool(sector.get('above_60dma')))}</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def build_sector_frame(sectors: list[dict]) -> pd.DataFrame:
+    rows = []
+    for item in sectors:
+        rows.append(
+            {
+                "섹터": item["name"],
+                "현재 흐름": item["trend_label"],
+                "1일": item.get("return_1d_pct"),
+                "1주": item.get("return_5d_pct"),
+                "1개월": item.get("return_21d_pct"),
+                "3개월": item.get("return_63d_pct"),
+                "20일선": "위" if item.get("above_20dma") else "아래",
+                "60일선": "위" if item.get("above_60dma") else "아래",
+                "추세 점수": item.get("trend_score"),
+                "구성": component_text(item.get("components", [])),
+                "기준": item.get("proxy_label", "-"),
+                "설명": item.get("note", "-"),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+st.title("📊 주요 섹터 흐름")
+st.write("지금 시장에서 어느 섹터로 자금이 붙고 있는지, 최근 수익률과 추세 기준으로 빠르게 확인하는 메뉴입니다.")
+
+control_col1, control_col2 = st.columns([1.2, 1])
+with control_col1:
+    market = st.radio(
+        "확인할 시장",
+        list(MARKET_OPTIONS.keys()),
+        format_func=market_display_name,
+        horizontal=True,
+    )
+with control_col2:
+    if st.button("데이터 새로고침", use_container_width=True):
+        get_sector_snapshot.clear()
+        st.rerun()
+
+st.caption(
+    "미국은 대표 섹터 ETF 기준, 국내는 대표 종목 3개를 같은 비중으로 묶은 바스켓 기준입니다."
+)
+
+try:
+    with st.spinner("섹터 흐름을 불러오는 중입니다..."):
+        snapshot = get_sector_snapshot(market)
+except requests.exceptions.RequestException as exc:
+    st.error(f"백엔드 서버 연결에 실패했습니다: {exc}")
+    if getattr(exc, "response", None) is not None:
+        try:
+            st.error(exc.response.json().get("detail", ""))
+        except Exception:
+            pass
+    st.stop()
+except Exception as exc:
+    st.error(f"섹터 데이터를 불러오지 못했습니다: {exc}")
+    st.stop()
+
+sectors = snapshot.get("sectors", [])
+leaders = snapshot.get("leaders", [])
+laggards = snapshot.get("laggards", [])
+
+st.caption(
+    f"기준 시점: {format_as_of_date(snapshot.get('as_of'))}"
+)
+st.info(snapshot.get("summary", "요약 정보를 불러오지 못했습니다."))
+
+leader_cols = st.columns(3)
+for index, sector in enumerate(leaders[:3]):
+    render_sector_card(leader_cols[index], f"상대 강세 {index + 1}", sector)
+
+if laggards:
+    weak_col1, weak_col2 = st.columns(2)
+    render_sector_card(weak_col1, "약한 섹터 1", laggards[0])
+    if len(laggards) > 1:
+        render_sector_card(weak_col2, "약한 섹터 2", laggards[1])
+
+frame = build_sector_frame(sectors)
+
+chart_label = st.selectbox("차트 기준", list(METRIC_OPTIONS.keys()), index=2)
+chart_column = METRIC_OPTIONS[chart_label]
+chart_frame = frame[["섹터", chart_column]].rename(columns={chart_column: chart_label}).sort_values(by=chart_label, ascending=True)
+
+chart = px.bar(
+    chart_frame,
+    x=chart_label,
+    y="섹터",
+    orientation="h",
+    color=chart_label,
+    color_continuous_scale="RdYlGn",
+    title=f"{market_display_name(market)} 섹터별 {chart_label}",
+)
+chart.update_layout(height=520, coloraxis_showscale=False)
+chart.update_traces(texttemplate="%{x:.1f}", textposition="outside")
+st.plotly_chart(chart, use_container_width=True)
+
+styled_frame = frame.copy()
+for column in ["1일", "1주", "1개월", "3개월", "추세 점수"]:
+    styled_frame[column] = styled_frame[column].map(lambda value: "-" if pd.isna(value) else f"{value:+.1f}")
+
+st.subheader("섹터 비교 표")
+st.dataframe(styled_frame, use_container_width=True, hide_index=True)
+
+with st.expander("해석 기준"):
+    st.markdown(
+        """
+        - `1개월`, `3개월` 수익률이 높고 20일선과 60일선 위에 있으면 상대적으로 강한 섹터로 봅니다.
+        - `추세 점수`는 1일, 1주, 1개월, 3개월 수익률을 가중합한 값입니다.
+        - 국내 섹터는 ETF가 아니라 대표 종목 바스켓 기준이라, 실제 업종 전체와 완전히 같지는 않습니다.
+        """
+    )

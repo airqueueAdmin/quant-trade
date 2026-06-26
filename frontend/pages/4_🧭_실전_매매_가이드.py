@@ -35,7 +35,8 @@ st.markdown(
     }
     .compact-metric-label {
         font-size: 0.9rem;
-        color: rgba(250, 250, 250, 0.75);
+        color: inherit;
+        opacity: 0.75;
         margin-bottom: 0.35rem;
     }
     .compact-metric-value {
@@ -43,6 +44,7 @@ st.markdown(
         line-height: 1.35;
         font-weight: 700;
         word-break: break-word;
+        color: inherit;
     }
     </style>
     """,
@@ -122,6 +124,35 @@ def dollars_to_shares(amount, price, fee_rate):
     return math.floor(amount / (price * (1 + fee_rate)))
 
 
+def market_money_unit(market: str) -> str:
+    return "원" if market == "krx" else "달러"
+
+
+def amount_label(label: str, market: str) -> str:
+    return f"{label} ({market_money_unit(market)})"
+
+
+def market_amount_input(
+    label: str,
+    market: str,
+    *,
+    us_value: float,
+    krx_value: float,
+    us_step: float,
+    krx_step: float,
+    min_value: float = 0.0,
+    key: str | None = None,
+):
+    return st.number_input(
+        amount_label(label, market),
+        min_value=min_value,
+        value=us_value if market == "us" else krx_value,
+        step=us_step if market == "us" else krx_step,
+        format="%.0f",
+        key=key,
+    )
+
+
 def format_order_type(order_type, fixed_amount):
     if order_type == "fixed_amount" and fixed_amount:
         return f"고정 금액 분할 매수 (1회 {format_currency_pair(fixed_amount, FX_RATE['rate'] if FX_RATE else None)})"
@@ -171,18 +202,23 @@ def render_quick_start(backtest_results, backtest_context, backtest_market):
     )
 
     quick_market = st.radio("이번에 주문할 시장", ["us", "krx"], format_func=market_display_name, horizontal=True, key="quick_market")
-    quick_budget = st.number_input(
+    quick_budget = market_amount_input(
         "이번 1회 주문 예산",
-        min_value=0.0,
-        value=200.0 if quick_market == "us" else 200000.0,
-        step=10.0 if quick_market == "us" else 10000.0,
+        quick_market,
+        us_value=200.0,
+        krx_value=200000.0,
+        us_step=10.0,
+        krx_step=10000.0,
         key="quick_budget",
     )
-    quick_price = st.number_input(
+    quick_price = market_amount_input(
         "예상 매수가",
-        min_value=0.01,
-        value=95.0 if quick_market == "us" else 70000.0,
-        step=0.1 if quick_market == "us" else 100.0,
+        quick_market,
+        us_value=95.0,
+        krx_value=70000.0,
+        us_step=1.0,
+        krx_step=100.0,
+        min_value=1.0,
         key="quick_price",
     )
     quick_fee_pct = st.number_input(
@@ -528,8 +564,23 @@ with tab3:
 with tab4:
     st.subheader("매수 가능 수량 계산기")
     calculator_market = st.radio("계산할 시장", ["us", "krx"], format_func=market_display_name, horizontal=True)
-    budget = st.number_input("이번 주문에 쓸 금액", min_value=0.0, value=200.0, step=10.0)
-    price = st.number_input("현재 또는 지정가", min_value=0.01, value=95.0, step=0.1)
+    budget = market_amount_input(
+        "이번 주문에 쓸 금액",
+        calculator_market,
+        us_value=200.0,
+        krx_value=200000.0,
+        us_step=10.0,
+        krx_step=10000.0,
+    )
+    price = market_amount_input(
+        "현재 또는 지정가",
+        calculator_market,
+        us_value=95.0,
+        krx_value=70000.0,
+        us_step=1.0,
+        krx_step=100.0,
+        min_value=1.0,
+    )
     fee_pct = st.number_input("수수료 비율 (%)", min_value=0.0, value=0.10, step=0.01)
 
     fee_rate = fee_pct / 100
@@ -543,7 +594,14 @@ with tab4:
     render_compact_metric("남는 현금", format_market_amount(estimated_cash_left, calculator_market, FX_RATE["rate"] if FX_RATE else None), c3)
 
     st.subheader("분할매수 기준 예시")
-    total_budget = st.number_input("전체 투자 예정 금액", min_value=0.0, value=1000.0, step=50.0)
+    total_budget = market_amount_input(
+        "전체 투자 예정 금액",
+        calculator_market,
+        us_value=1000.0,
+        krx_value=1000000.0,
+        us_step=50.0,
+        krx_step=50000.0,
+    )
     split_count = st.selectbox("몇 번에 나눌지", [2, 3, 4, 5], index=1)
     per_order = total_budget / split_count if split_count else 0
     st.write(f"한 번당 약 `{format_market_amount(per_order, calculator_market, FX_RATE['rate'] if FX_RATE else None)}`씩 나눠서 매수하는 방식으로 사용할 수 있습니다.")
@@ -664,18 +722,23 @@ with tab7:
         stat8.metric("총 거래 횟수", f"{metrics.get('total_trades', 0)}회")
 
         st.subheader("주문 한도 계산")
-        guide_capital = st.number_input(
+        guide_capital = market_amount_input(
             "이 전략에 배정할 총 자금",
-            min_value=0.0,
-            value=float(st.session_state.get("initial_capital", 1000.0)),
-            step=100.0,
+            backtest_market,
+            us_value=float(st.session_state.get("initial_capital", 1000.0)),
+            krx_value=float(st.session_state.get("initial_capital", 1000000.0)),
+            us_step=100.0,
+            krx_step=100000.0,
             key="guide_capital",
         )
-        guide_price = st.number_input(
-            "예상 매수가 (현재가 또는 지정가, KRW)" if backtest_market == "krx" else "예상 매수가 (현재가 또는 지정가, USD)",
-            min_value=0.01,
-            value=95.0,
-            step=0.1,
+        guide_price = market_amount_input(
+            "예상 매수가 (현재가 또는 지정가)",
+            backtest_market,
+            us_value=95.0,
+            krx_value=70000.0,
+            us_step=1.0,
+            krx_step=100.0,
+            min_value=1.0,
             key="guide_price",
         )
         guide_fee_pct = st.number_input(
