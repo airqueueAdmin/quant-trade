@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
+import os
 from typing import Any, Iterable
 import json
 
@@ -8,7 +9,9 @@ import numpy as np
 import pandas as pd
 from fastapi import FastAPI, HTTPException, Response, status
 from pydantic import BaseModel, Field, field_validator, model_validator
+import requests
 import yfinance as yf
+from dotenv import load_dotenv
 
 from backtester import backtest_buy_and_hold, backtest_strategy
 from data_provider import (
@@ -25,7 +28,13 @@ from strategies.bollinger_bands import bollinger_bands_strategy
 from strategies.moving_average import moving_average_cross_strategy
 from strategies.rsi import rsi_strategy
 
+load_dotenv()
+
 app = FastAPI(title="Quant Trading API")
+DEFAULT_PAPER_SEED_CASH_KRW = 10_000_000.0
+SUPABASE_URL = (os.getenv("SUPABASE_URL") or "").rstrip("/")
+SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or ""
+SUPABASE_DB_SCHEMA = os.getenv("SUPABASE_DB_SCHEMA", "public")
 
 US_SECTOR_UNIVERSE = [
     {"key": "technology", "name": "기술", "proxy": "XLK", "components": [{"ticker": "XLK", "name": "Technology Select Sector SPDR Fund"}], "note": "미국 대형 기술주 ETF"},
@@ -210,6 +219,51 @@ class BollingerBandsOptimizationRequest(BaseOptimizationRequest):
     num_std_dev_range: list[float] = Field(min_length=3, max_length=3)
 
 
+class PaperTradingAccountRequest(BaseModel):
+    account_id: str = Field(min_length=3, max_length=64)
+
+    @field_validator("account_id")
+    @classmethod
+    def validate_account_id(cls, value: str) -> str:
+        return normalize_paper_account_id(value)
+
+
+class PaperTradingOrderRequest(PaperTradingAccountRequest):
+    ticker: str = Field(min_length=1, max_length=32)
+    krx_exchange: str = Field(default="auto")
+    side: str = Field(min_length=2, max_length=4)
+    shares: int = Field(ge=1, le=1_000_000)
+    company_name: str | None = Field(default=None, max_length=128)
+
+    @field_validator("ticker")
+    @classmethod
+    def normalize_ticker(cls, value: str) -> str:
+        return normalize_ticker_input(value)
+
+    @field_validator("krx_exchange")
+    @classmethod
+    def validate_krx_exchange(cls, value: str) -> str:
+        return normalize_krx_exchange(value)
+
+    @field_validator("side")
+    @classmethod
+    def validate_side(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in {"buy", "sell"}:
+            raise ValueError("side must be 'buy' or 'sell'")
+        return normalized
+
+
+def normalize_paper_account_id(value: str) -> str:
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError("account_id is required")
+    allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_")
+    if any(char not in allowed for char in normalized):
+        raise ValueError("account_id may only contain letters, numbers, hyphen, and underscore")
+    return normalized
+
+
 def ensure_data(ticker: str, start_date: str, end_date: str, market: str = "us", krx_exchange: str = "auto") -> pd.DataFrame:
     market, krx_exchange = validate_market_params(market, krx_exchange)
     try:
@@ -264,6 +318,158 @@ def validate_market_params(market: str, krx_exchange: str) -> tuple[str, str]:
         return normalize_market(market), normalize_krx_exchange(krx_exchange)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def ensure_supabase_configured() -> None:
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        raise HTTPException(
+            status_code=503,
+            detail="Supabase가 설정되지 않았습니다. SUPABASE_URL과 SUPABASE_SERVICE_ROLE_KEY를 확인하세요.",
+        )
+
+
+def supabase_headers(prefer: str | None = None) -> dict[str, str]:
+    headers = {
+        "apikey": SUPABASE_SERVICE_ROLE_KEY,
+        "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    if prefer:
+        headers["Prefer"] = prefer
+    if SUPABASE_DB_SCHEMA:
+        headers["Accept-Profile"] = SUPABASE_DB_SCHEMA
+        headers["Content-Profile"] = SUPABASE_DB_SCHEMA
+    return headers
+
+
+def parse_supabase_error(response: requests.Response) -> str:
+    try:
+        payload = response.json()
+        if isinstance(payload, dict):
+            return str(payload.get("message") or payload.get("error_description") or payload.get("hint") or payload)
+    except Exception:
+        pass
+    return response.text or f"HTTP {response.status_code}"
+
+
+def call_supabase(
+    method: str,
+    path: str,
+    *,
+    params: dict[str, Any] | None = None,
+    json_payload: Any = None,
+    prefer: str | None = None,
+) -> Any:
+    ensure_supabase_configured()
+    url = f"{SUPABASE_URL}{path}"
+    response = requests.request(
+        method,
+        url,
+        headers=supabase_headers(prefer=prefer),
+        params=params,
+        json=json_payload,
+        timeout=20,
+    )
+    if response.status_code >= 400:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Supabase 요청에 실패했습니다: {parse_supabase_error(response)}",
+        )
+    if not response.content:
+        return None
+    try:
+        return response.json()
+    except ValueError:
+        return response.text
+
+
+def ensure_paper_account(account_id: str) -> dict[str, Any]:
+    rows = call_supabase(
+        "GET",
+        "/rest/v1/paper_trading_accounts",
+        params={
+            "account_id": f"eq.{account_id}",
+            "select": "account_id,cash_krw,seed_cash_krw,updated_at",
+            "limit": 1,
+        },
+    ) or []
+    if rows:
+        return rows[0]
+
+    created = call_supabase(
+        "POST",
+        "/rest/v1/paper_trading_accounts",
+        json_payload=[{"account_id": account_id, "cash_krw": DEFAULT_PAPER_SEED_CASH_KRW, "seed_cash_krw": DEFAULT_PAPER_SEED_CASH_KRW}],
+        prefer="return=representation",
+    ) or []
+    if not created:
+        raise HTTPException(status_code=503, detail="Supabase 계좌를 생성하지 못했습니다.")
+    return created[0]
+
+
+def get_paper_trading_state(account_id: str) -> dict[str, Any]:
+    account = ensure_paper_account(account_id)
+    holdings = call_supabase(
+        "GET",
+        "/rest/v1/paper_trading_positions",
+        params={
+            "account_id": f"eq.{account_id}",
+            "select": "ticker,company_name,krx_exchange,shares,avg_price,updated_at",
+            "order": "updated_at.desc",
+        },
+    ) or []
+    trades = call_supabase(
+        "GET",
+        "/rest/v1/paper_trading_trades",
+        params={
+            "account_id": f"eq.{account_id}",
+            "select": "id,side,ticker,company_name,krx_exchange,price,shares,amount_krw,traded_at",
+            "order": "traded_at.desc",
+            "limit": 200,
+        },
+    ) or []
+    return normalize_value(
+        {
+            "account_id": account_id,
+            "cash_krw": account.get("cash_krw", DEFAULT_PAPER_SEED_CASH_KRW),
+            "seed_cash_krw": account.get("seed_cash_krw", DEFAULT_PAPER_SEED_CASH_KRW),
+            "holdings": holdings,
+            "trades": trades,
+            "updated_at": account.get("updated_at"),
+        }
+    )
+
+
+def execute_paper_trade(request: PaperTradingOrderRequest) -> dict[str, Any]:
+    quote = create_quote_snapshot(request.ticker, market="krx", krx_exchange=request.krx_exchange)
+    company_name = request.company_name or quote.get("company_name") or request.ticker
+    payload = {
+        "p_account_id": request.account_id,
+        "p_ticker": request.ticker,
+        "p_company_name": company_name,
+        "p_krx_exchange": request.krx_exchange,
+        "p_side": request.side,
+        "p_price": float(quote["close"]),
+        "p_shares": int(request.shares),
+    }
+    result = call_supabase(
+        "POST",
+        "/rest/v1/rpc/execute_paper_trade",
+        json_payload=payload,
+        prefer="return=representation",
+    )
+    return normalize_value({"quote": quote, "result": result})
+
+
+def reset_paper_trading_account(account_id: str) -> dict[str, Any]:
+    result = call_supabase(
+        "POST",
+        "/rest/v1/rpc/reset_paper_trading_account",
+        json_payload={"p_account_id": account_id, "p_seed_cash_krw": DEFAULT_PAPER_SEED_CASH_KRW},
+        prefer="return=representation",
+    )
+    return normalize_value({"account_id": account_id, "result": result})
 
 
 def serialize_portfolio(portfolio: pd.DataFrame) -> list[dict[str, Any]]:
@@ -754,6 +960,25 @@ def market_sectors(market: str = "us") -> dict[str, Any]:
 @app.get("/quote/{ticker}")
 def quote_data(ticker: str, market: str = "us", krx_exchange: str = "auto") -> dict[str, Any]:
     return create_quote_snapshot(ticker, market=market, krx_exchange=krx_exchange)
+
+
+@app.get("/paper-trading/state")
+def paper_trading_state(account_id: str) -> dict[str, Any]:
+    try:
+        normalized_account_id = normalize_paper_account_id(account_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return get_paper_trading_state(normalized_account_id)
+
+
+@app.post("/paper-trading/order")
+def paper_trading_order(request: PaperTradingOrderRequest) -> dict[str, Any]:
+    return execute_paper_trade(request)
+
+
+@app.post("/paper-trading/reset")
+def paper_trading_reset(request: PaperTradingAccountRequest) -> dict[str, Any]:
+    return reset_paper_trading_account(request.account_id)
 
 
 @app.get("/sentiment/{ticker}")

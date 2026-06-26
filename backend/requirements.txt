@@ -6,3 +6,4 @@ pandas
 gnews
 google-genai
 python-dotenv
+requests

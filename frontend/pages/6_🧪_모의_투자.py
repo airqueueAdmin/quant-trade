@@ -8,7 +8,7 @@ from ga import inject_google_analytics
 from market_utils import get_common_krx_companies, search_krx_companies
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000")
-DEFAULT_SEED_CASH = 10_000_000
+DEFAULT_ACCOUNT_ID = "paper-demo"
 
 st.set_page_config(layout="wide", page_title="모의 투자")
 inject_google_analytics(os.getenv("GA_MEASUREMENT_ID") or os.getenv("GA_TAG_ID"), "paper_trading")
@@ -49,6 +49,12 @@ def format_pct(value: float) -> str:
     return f"{value:+.2f}%"
 
 
+def format_date(value: str | None) -> str:
+    if not value:
+        return "-"
+    return str(value).split("T", 1)[0]
+
+
 def render_card(column, label: str, value: str) -> None:
     column.markdown(
         f"""
@@ -61,13 +67,15 @@ def render_card(column, label: str, value: str) -> None:
     )
 
 
-def init_paper_state() -> None:
-    if "paper_cash_krw" not in st.session_state:
-        st.session_state.paper_cash_krw = float(DEFAULT_SEED_CASH)
-    if "paper_holdings" not in st.session_state:
-        st.session_state.paper_holdings = {}
-    if "paper_trades" not in st.session_state:
-        st.session_state.paper_trades = []
+@st.cache_data(ttl=10, show_spinner=False)
+def get_paper_state(account_id: str) -> dict:
+    response = requests.get(
+        f"{BACKEND_URL}/paper-trading/state",
+        params={"account_id": account_id},
+        timeout=20,
+    )
+    response.raise_for_status()
+    return response.json()
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -105,54 +113,35 @@ def get_quote_silently(ticker: str, krx_exchange: str) -> dict | None:
         return None
 
 
-def update_holding_after_buy(ticker: str, name: str, exchange: str, price: float, shares: int) -> None:
-    holdings = st.session_state.paper_holdings
-    current = holdings.get(
-        ticker,
-        {"ticker": ticker, "name": name, "krx_exchange": exchange, "shares": 0, "avg_price": 0.0},
-    )
-    current_cost = float(current["avg_price"]) * int(current["shares"])
-    new_cost = current_cost + (price * shares)
-    new_shares = int(current["shares"]) + shares
-    current["shares"] = new_shares
-    current["avg_price"] = new_cost / new_shares if new_shares else 0.0
-    current["name"] = name
-    current["krx_exchange"] = exchange
-    holdings[ticker] = current
-
-
-def update_holding_after_sell(ticker: str, shares: int) -> None:
-    holdings = st.session_state.paper_holdings
-    current = holdings.get(ticker)
-    if not current:
-        return
-    current["shares"] = int(current["shares"]) - shares
-    if current["shares"] <= 0:
-        holdings.pop(ticker, None)
-    else:
-        holdings[ticker] = current
-
-
-def add_trade_record(side: str, quote: dict, shares: int, amount: float) -> None:
-    st.session_state.paper_trades.insert(
-        0,
-        {
-            "일시": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "구분": side,
-            "종목": quote.get("company_name") or quote["ticker"],
-            "티커": quote["ticker"],
-            "거래소": str(quote.get("krx_exchange", "auto")).upper(),
-            "단가": float(quote["close"]),
-            "수량": int(shares),
-            "거래금액": float(amount),
+def submit_order(account_id: str, ticker: str, company_name: str, krx_exchange: str, side: str, shares: int) -> None:
+    response = requests.post(
+        f"{BACKEND_URL}/paper-trading/order",
+        json={
+            "account_id": account_id,
+            "ticker": ticker,
+            "company_name": company_name,
+            "krx_exchange": krx_exchange,
+            "side": side,
+            "shares": shares,
         },
+        timeout=20,
     )
+    response.raise_for_status()
 
 
-def build_holdings_frame() -> pd.DataFrame:
+def reset_account(account_id: str) -> None:
+    response = requests.post(
+        f"{BACKEND_URL}/paper-trading/reset",
+        json={"account_id": account_id},
+        timeout=20,
+    )
+    response.raise_for_status()
+
+
+def build_holdings_frame(holdings: list[dict]) -> pd.DataFrame:
     rows = []
-    for ticker, holding in st.session_state.paper_holdings.items():
-        quote = get_quote_silently(ticker, holding.get("krx_exchange", "auto"))
+    for holding in holdings:
+        quote = get_quote_silently(holding["ticker"], holding.get("krx_exchange", "auto"))
         if not quote:
             continue
 
@@ -166,8 +155,8 @@ def build_holdings_frame() -> pd.DataFrame:
 
         rows.append(
             {
-                "종목": holding["name"],
-                "티커": ticker,
+                "종목": holding.get("company_name") or holding["ticker"],
+                "티커": holding["ticker"],
                 "거래소": str(holding.get("krx_exchange", "auto")).upper(),
                 "보유수량": shares,
                 "평균단가": avg_price,
@@ -175,31 +164,70 @@ def build_holdings_frame() -> pd.DataFrame:
                 "평가금액": market_value,
                 "평가손익": pnl_amount,
                 "수익률": pnl_pct,
-                "기준일": str(quote.get("as_of", "-")).split("T", 1)[0],
+                "기준일": format_date(quote.get("as_of")),
             }
         )
     return pd.DataFrame(rows)
 
 
-def reset_paper_account() -> None:
-    st.session_state.paper_cash_krw = float(DEFAULT_SEED_CASH)
-    st.session_state.paper_holdings = {}
-    st.session_state.paper_trades = []
-    get_quote.clear()
+def build_trades_frame(trades: list[dict]) -> pd.DataFrame:
+    rows = []
+    for trade in trades:
+        rows.append(
+            {
+                "일시": str(trade.get("traded_at", "-")).replace("T", " ").replace("+00:00", ""),
+                "구분": "매수" if trade.get("side") == "buy" else "매도",
+                "종목": trade.get("company_name") or trade.get("ticker"),
+                "티커": trade.get("ticker"),
+                "거래소": str(trade.get("krx_exchange", "auto")).upper(),
+                "단가": float(trade.get("price", 0)),
+                "수량": int(trade.get("shares", 0)),
+                "거래금액": float(trade.get("amount_krw", 0)),
+            }
+        )
+    return pd.DataFrame(rows)
 
 
-init_paper_state()
+if "paper_account_id" not in st.session_state:
+    st.session_state.paper_account_id = DEFAULT_ACCOUNT_ID
 
 st.title("🧪 모의 투자")
-st.caption("국내주식 전용 모의투자 메뉴입니다. 실제 주문이 아니라 브라우저 세션 기준으로만 임시 저장됩니다.")
+st.caption("국내주식 전용 모의투자 메뉴입니다. 데이터는 Supabase에 저장되며, 같은 계좌 ID를 쓰면 다른 브라우저에서도 이어서 볼 수 있습니다.")
 
-top_col1, top_col2 = st.columns([1.3, 1])
+top_col1, top_col2 = st.columns([1.4, 1])
 with top_col1:
-    st.write("대표 종목을 고르거나 종목명을 검색해 가상으로 매수·매도할 수 있습니다.")
+    account_id = st.text_input(
+        "계좌 ID",
+        value=st.session_state.paper_account_id,
+        help="영문, 숫자, -, _ 만 사용합니다. 같은 ID를 쓰면 같은 모의계좌를 이어서 사용합니다.",
+    ).strip()
+    st.session_state.paper_account_id = account_id or DEFAULT_ACCOUNT_ID
 with top_col2:
     if st.button("모의 계좌 초기화", use_container_width=True):
-        reset_paper_account()
-        st.rerun()
+        try:
+            reset_account(st.session_state.paper_account_id)
+            get_paper_state.clear()
+            get_quote.clear()
+            st.success("모의 계좌를 초기화했습니다.")
+            st.rerun()
+        except requests.exceptions.RequestException as exc:
+            st.error(f"모의 계좌 초기화에 실패했습니다: {exc}")
+            if getattr(exc, "response", None) is not None:
+                try:
+                    st.error(exc.response.json().get("detail", ""))
+                except Exception:
+                    pass
+
+try:
+    paper_state = get_paper_state(st.session_state.paper_account_id)
+except requests.exceptions.RequestException as exc:
+    st.error(f"모의투자 상태를 불러오지 못했습니다: {exc}")
+    if getattr(exc, "response", None) is not None:
+        try:
+            st.error(exc.response.json().get("detail", ""))
+        except Exception:
+            pass
+    st.stop()
 
 selector_col, summary_col = st.columns([1.2, 1])
 
@@ -220,7 +248,6 @@ with selector_col:
         key="paper_search_query",
         help="회사명이나 6자리 종목코드를 입력하세요. 예: 삼성전자, 005930",
     )
-
     if search_query.strip():
         search_results = search_krx_companies(search_query, limit=20)
         if search_results:
@@ -243,16 +270,18 @@ with selector_col:
         f"시장: {selected_company['krx_exchange'].upper()}"
     )
 
-with summary_col:
-    holdings_frame = build_holdings_frame()
-    holdings_value = float(holdings_frame["평가금액"].sum()) if not holdings_frame.empty else 0.0
-    total_assets = float(st.session_state.paper_cash_krw) + holdings_value
-    total_pnl = total_assets - float(DEFAULT_SEED_CASH)
-    total_return_pct = (total_pnl / float(DEFAULT_SEED_CASH)) * 100 if DEFAULT_SEED_CASH else 0.0
+holdings_frame = build_holdings_frame(paper_state.get("holdings", []))
+cash_krw = float(paper_state.get("cash_krw", 0))
+seed_cash_krw = float(paper_state.get("seed_cash_krw", 0))
+holdings_value = float(holdings_frame["평가금액"].sum()) if not holdings_frame.empty else 0.0
+total_assets = cash_krw + holdings_value
+total_pnl = total_assets - seed_cash_krw
+total_return_pct = (total_pnl / seed_cash_krw) * 100 if seed_cash_krw else 0.0
 
+with summary_col:
     s1, s2 = st.columns(2)
     s3, s4 = st.columns(2)
-    render_card(s1, "예수금", format_krw(st.session_state.paper_cash_krw))
+    render_card(s1, "예수금", format_krw(cash_krw))
     render_card(s2, "보유 평가금액", format_krw(holdings_value))
     render_card(s3, "총 자산", format_krw(total_assets))
     render_card(s4, "누적 수익률", format_pct(total_return_pct))
@@ -268,13 +297,14 @@ if quote:
     render_card(q1, "종목", f"{quote.get('company_name') or quote['ticker']} ({quote['ticker']})")
     render_card(q2, "현재가", format_krw(quote["close"]))
     render_card(q3, "전일 대비", f"{format_krw(quote['change_amount'])} / {format_pct(quote['change_pct'])}")
-    render_card(q4, "기준일", str(quote.get("as_of", "-")).split("T", 1)[0])
+    render_card(q4, "기준일", format_date(quote.get("as_of")))
 
     order_col1, order_col2 = st.columns([1.1, 1])
     with order_col1:
         st.subheader("모의 주문")
-        max_buyable_shares = int(st.session_state.paper_cash_krw // float(quote["close"])) if float(quote["close"]) > 0 else 0
-        owned_shares = int(st.session_state.paper_holdings.get(quote["ticker"], {}).get("shares", 0))
+        max_buyable_shares = int(cash_krw // float(quote["close"])) if float(quote["close"]) > 0 else 0
+        current_holding = next((item for item in paper_state.get("holdings", []) if item["ticker"] == quote["ticker"]), None)
+        owned_shares = int(current_holding.get("shares", 0)) if current_holding else 0
 
         with st.form("paper_trade_form"):
             trade_side = st.radio("주문 구분", ["매수", "매도"], horizontal=True)
@@ -287,31 +317,26 @@ if quote:
             submitted = st.form_submit_button("주문 반영")
 
         if submitted:
-            shares = int(trade_shares)
-            if trade_side == "매수":
-                if shares > max_buyable_shares:
-                    st.error("예수금이 부족합니다.")
-                else:
-                    st.session_state.paper_cash_krw -= estimated_amount
-                    update_holding_after_buy(
-                        quote["ticker"],
-                        quote.get("company_name") or quote["ticker"],
-                        quote.get("krx_exchange", "auto"),
-                        float(quote["close"]),
-                        shares,
-                    )
-                    add_trade_record("매수", quote, shares, estimated_amount)
-                    st.success(f"{shares}주 매수를 모의 반영했습니다.")
-                    st.rerun()
-            else:
-                if shares > owned_shares:
-                    st.error("보유 수량보다 많이 매도할 수 없습니다.")
-                else:
-                    st.session_state.paper_cash_krw += estimated_amount
-                    update_holding_after_sell(quote["ticker"], shares)
-                    add_trade_record("매도", quote, shares, estimated_amount)
-                    st.success(f"{shares}주 매도를 모의 반영했습니다.")
-                    st.rerun()
+            try:
+                submit_order(
+                    account_id=st.session_state.paper_account_id,
+                    ticker=quote["ticker"],
+                    company_name=quote.get("company_name") or quote["ticker"],
+                    krx_exchange=quote.get("krx_exchange", "auto"),
+                    side="buy" if trade_side == "매수" else "sell",
+                    shares=int(trade_shares),
+                )
+                get_paper_state.clear()
+                get_quote.clear()
+                st.success(f"{trade_side} 주문을 모의 반영했습니다.")
+                st.rerun()
+            except requests.exceptions.RequestException as exc:
+                st.error(f"주문 반영에 실패했습니다: {exc}")
+                if getattr(exc, "response", None) is not None:
+                    try:
+                        st.error(exc.response.json().get("detail", ""))
+                    except Exception:
+                        pass
 
     with order_col2:
         st.subheader("사용 안내")
@@ -320,7 +345,7 @@ if quote:
             - 국내주식만 지원합니다.
             - 현재가는 최근 종가 기준입니다.
             - 수수료, 세금, 슬리피지는 아직 반영하지 않습니다.
-            - 브라우저 세션 기준 임시 저장이라 창을 바꾸거나 초기화하면 기록이 사라질 수 있습니다.
+            - Supabase에 저장되므로 같은 계좌 ID로 다시 접속하면 이어서 볼 수 있습니다.
             """
         )
 
@@ -335,11 +360,10 @@ else:
     st.dataframe(display_holdings.sort_values(by="평가금액", ascending=False), use_container_width=True, hide_index=True)
 
 st.subheader("거래 내역")
-trades_frame = pd.DataFrame(st.session_state.paper_trades)
+trades_frame = build_trades_frame(paper_state.get("trades", []))
 if trades_frame.empty:
     st.info("아직 반영된 모의 주문이 없습니다.")
 else:
-    display_trades = trades_frame.copy()
-    display_trades["단가"] = display_trades["단가"].map(format_krw)
-    display_trades["거래금액"] = display_trades["거래금액"].map(format_krw)
-    st.dataframe(display_trades, use_container_width=True, hide_index=True)
+    trades_frame["단가"] = trades_frame["단가"].map(format_krw)
+    trades_frame["거래금액"] = trades_frame["거래금액"].map(format_krw)
+    st.dataframe(trades_frame, use_container_width=True, hide_index=True)

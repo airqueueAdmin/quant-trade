@@ -5,6 +5,10 @@ services:
     container_name: quant-backend
     ports:
       - "8000:8000"
+    environment:
+      SUPABASE_URL: ${SUPABASE_URL:-}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-}
+      SUPABASE_DB_SCHEMA: ${SUPABASE_DB_SCHEMA:-public}
     volumes:
       - ./backend:/app
 
