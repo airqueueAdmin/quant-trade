@@ -556,6 +556,53 @@ def create_sector_snapshot(market: str) -> dict[str, Any]:
     )
 
 
+def create_quote_snapshot(ticker: str, market: str = "us", krx_exchange: str = "auto") -> dict[str, Any]:
+    normalized_ticker = normalize_ticker_input(ticker)
+    normalized_market, normalized_exchange = validate_market_params(market, krx_exchange)
+
+    end_date = date.today() + timedelta(days=1)
+    start_date = end_date - timedelta(days=40)
+    data = get_stock_data(
+        normalized_ticker,
+        start_date.isoformat(),
+        end_date.isoformat(),
+        market=normalized_market,
+        krx_exchange=normalized_exchange,
+    )
+    if data.empty or "Close" not in data.columns:
+        raise HTTPException(status_code=404, detail=f"{normalized_ticker}의 현재가 데이터를 찾을 수 없습니다.")
+
+    close_series = data["Close"].dropna().astype(float)
+    if close_series.empty:
+        raise HTTPException(status_code=404, detail=f"{normalized_ticker}의 종가 데이터를 찾을 수 없습니다.")
+
+    latest_close = float(close_series.iloc[-1])
+    previous_close = float(close_series.iloc[-2]) if len(close_series) >= 2 else latest_close
+    change_amount = latest_close - previous_close
+    change_pct = ((latest_close / previous_close) - 1) * 100 if previous_close else 0.0
+
+    profile = get_symbol_profile(
+        normalized_ticker,
+        market=normalized_market,
+        krx_exchange=normalized_exchange,
+    )
+
+    return normalize_value(
+        {
+            "ticker": normalized_ticker,
+            "resolved_ticker": data.attrs.get("resolved_ticker", profile.get("resolved_ticker", normalized_ticker)),
+            "market": data.attrs.get("market", normalized_market),
+            "krx_exchange": data.attrs.get("krx_exchange", normalized_exchange),
+            "company_name": profile.get("name"),
+            "as_of": close_series.index[-1],
+            "close": latest_close,
+            "previous_close": previous_close,
+            "change_amount": change_amount,
+            "change_pct": change_pct,
+        }
+    )
+
+
 def run_backtest(
     strategy_func,
     request: BaseBacktestRequest,
@@ -702,6 +749,11 @@ def usdkrw_rate() -> dict[str, Any]:
 @app.get("/market/sectors")
 def market_sectors(market: str = "us") -> dict[str, Any]:
     return create_sector_snapshot(market)
+
+
+@app.get("/quote/{ticker}")
+def quote_data(ticker: str, market: str = "us", krx_exchange: str = "auto") -> dict[str, Any]:
+    return create_quote_snapshot(ticker, market=market, krx_exchange=krx_exchange)
 
 
 @app.get("/sentiment/{ticker}")
