@@ -192,7 +192,7 @@ if "paper_account_id" not in st.session_state:
     st.session_state.paper_account_id = DEFAULT_ACCOUNT_ID
 
 st.title("🧪 모의 투자")
-st.caption("국내주식 전용 모의투자 메뉴입니다. 데이터는 Supabase에 저장되며, 같은 계좌 ID를 쓰면 다른 브라우저에서도 이어서 볼 수 있습니다.")
+st.caption("국내주식 전용 모의투자 메뉴입니다. 같은 계좌 ID를 쓰면 다른 브라우저에서도 이어서 볼 수 있습니다.")
 
 top_col1, top_col2 = st.columns([1.4, 1])
 with top_col1:
