@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
+import base64
+import hashlib
+import hmac
 import os
+import secrets
 from typing import Any, Iterable
 import json
 
 import numpy as np
 import pandas as pd
-from fastapi import FastAPI, HTTPException, Response, status
+from fastapi import FastAPI, Header, HTTPException, Response, status
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator, model_validator
 import requests
 import yfinance as yf
@@ -30,11 +35,36 @@ from strategies.rsi import rsi_strategy
 
 load_dotenv()
 
-app = FastAPI(title="Quant Trading API")
+DEFAULT_CORS_ORIGINS = [
+    "http://localhost:4173",
+    "http://127.0.0.1:4173",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
 DEFAULT_PAPER_SEED_CASH_KRW = 10_000_000.0
 SUPABASE_URL = (os.getenv("SUPABASE_URL") or "").rstrip("/")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or ""
 SUPABASE_DB_SCHEMA = os.getenv("SUPABASE_DB_SCHEMA", "public")
+CORS_ALLOW_ORIGINS = os.getenv("CORS_ALLOW_ORIGINS", "").strip()
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or ""
+APP_SESSION_SECRET = os.getenv("APP_SESSION_SECRET") or secrets.token_hex(32)
+
+
+def parse_allowed_origins(raw_value: str) -> list[str]:
+    if not raw_value:
+        return DEFAULT_CORS_ORIGINS
+    origins = [item.strip() for item in raw_value.split(",") if item.strip()]
+    return origins or DEFAULT_CORS_ORIGINS
+
+
+app = FastAPI(title="Quant Trading API")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=parse_allowed_origins(CORS_ALLOW_ORIGINS),
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 US_SECTOR_UNIVERSE = [
     {"key": "technology", "name": "기술", "proxy": "XLK", "components": [{"ticker": "XLK", "name": "Technology Select Sector SPDR Fund"}], "note": "미국 대형 기술주 ETF"},
@@ -220,11 +250,13 @@ class BollingerBandsOptimizationRequest(BaseOptimizationRequest):
 
 
 class PaperTradingAccountRequest(BaseModel):
-    account_id: str = Field(min_length=3, max_length=64)
+    account_id: str | None = Field(default=None, min_length=3, max_length=64)
 
     @field_validator("account_id")
     @classmethod
-    def validate_account_id(cls, value: str) -> str:
+    def validate_account_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         return normalize_paper_account_id(value)
 
 
@@ -262,6 +294,58 @@ def normalize_paper_account_id(value: str) -> str:
     if any(char not in allowed for char in normalized):
         raise ValueError("account_id may only contain letters, numbers, hyphen, and underscore")
     return normalized
+
+
+def build_session_account_id() -> str:
+    return f"paper-{secrets.token_hex(6)}"
+
+
+def encode_session_token(account_id: str) -> str:
+    payload = account_id.encode("utf-8")
+    signature = hmac.new(APP_SESSION_SECRET.encode("utf-8"), payload, hashlib.sha256).digest()
+    return f"{base64.urlsafe_b64encode(payload).decode('utf-8').rstrip('=')}.{base64.urlsafe_b64encode(signature).decode('utf-8').rstrip('=')}"
+
+
+def decode_session_token(token: str) -> str:
+    try:
+        encoded_payload, encoded_signature = token.split(".", 1)
+        payload_bytes = base64.urlsafe_b64decode(f"{encoded_payload}==")
+        signature_bytes = base64.urlsafe_b64decode(f"{encoded_signature}==")
+    except Exception as exc:
+        raise HTTPException(status_code=401, detail="세션 토큰 형식이 올바르지 않습니다.") from exc
+
+    expected_signature = hmac.new(
+        APP_SESSION_SECRET.encode("utf-8"),
+        payload_bytes,
+        hashlib.sha256,
+    ).digest()
+    if not hmac.compare_digest(signature_bytes, expected_signature):
+        raise HTTPException(status_code=401, detail="세션 토큰 검증에 실패했습니다.")
+
+    try:
+        account_id = payload_bytes.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise HTTPException(status_code=401, detail="세션 토큰을 해석할 수 없습니다.") from exc
+
+    return normalize_paper_account_id(account_id)
+
+
+def resolve_paper_session_token(x_app_session: str | None) -> str:
+    normalized = (x_app_session or "").strip()
+    if not normalized:
+        raise HTTPException(status_code=401, detail="세션 토큰이 필요합니다.")
+    return normalized
+
+
+def resolve_paper_account_id(
+    account_id: str | None,
+    x_app_session: str | None,
+) -> str:
+    if x_app_session:
+        return decode_session_token(resolve_paper_session_token(x_app_session))
+    if account_id:
+        return normalize_paper_account_id(account_id)
+    raise HTTPException(status_code=401, detail="세션 토큰이 필요합니다.")
 
 
 def ensure_data(ticker: str, start_date: str, end_date: str, market: str = "us", krx_exchange: str = "auto") -> pd.DataFrame:
@@ -320,8 +404,12 @@ def validate_market_params(market: str, krx_exchange: str) -> tuple[str, str]:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+def is_supabase_configured() -> bool:
+    return bool(SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY)
+
+
 def ensure_supabase_configured() -> None:
-    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+    if not is_supabase_configured():
         raise HTTPException(
             status_code=503,
             detail="Supabase가 설정되지 않았습니다. SUPABASE_URL과 SUPABASE_SERVICE_ROLE_KEY를 확인하세요.",
@@ -343,14 +431,40 @@ def supabase_headers(prefer: str | None = None) -> dict[str, str]:
     return headers
 
 
-def parse_supabase_error(response: requests.Response) -> str:
+def extract_supabase_error(response: requests.Response) -> dict[str, Any] | None:
     try:
         payload = response.json()
         if isinstance(payload, dict):
-            return str(payload.get("message") or payload.get("error_description") or payload.get("hint") or payload)
+            return payload
     except Exception:
         pass
+    return None
+
+
+def parse_supabase_error(response: requests.Response) -> str:
+    payload = extract_supabase_error(response)
+    if payload:
+        return str(payload.get("message") or payload.get("error_description") or payload.get("hint") or payload)
     return response.text or f"HTTP {response.status_code}"
+
+
+def map_supabase_error(response: requests.Response) -> tuple[int, str]:
+    detail = parse_supabase_error(response)
+    normalized_detail = detail.strip().lower()
+
+    if normalized_detail == "insufficient cash":
+        return 400, "예수금이 부족합니다. 주문 수량을 줄이거나 모의 계좌를 초기화하세요."
+    if normalized_detail == "insufficient shares":
+        return 400, "보유 수량이 부족합니다. 현재 보유 주식 수를 확인하세요."
+    if normalized_detail == "invalid side":
+        return 400, "주문 구분이 올바르지 않습니다."
+    if normalized_detail == "price and shares must be positive":
+        return 400, "주문 가격과 수량은 0보다 커야 합니다."
+
+    if response.status_code in {400, 401, 403, 404, 409, 422}:
+        return response.status_code, f"Supabase 요청에 실패했습니다: {detail}"
+
+    return 503, f"Supabase 요청에 실패했습니다: {detail}"
 
 
 def call_supabase(
@@ -372,9 +486,10 @@ def call_supabase(
         timeout=20,
     )
     if response.status_code >= 400:
+        status_code, detail = map_supabase_error(response)
         raise HTTPException(
-            status_code=503,
-            detail=f"Supabase 요청에 실패했습니다: {parse_supabase_error(response)}",
+            status_code=status_code,
+            detail=detail,
         )
     if not response.content:
         return None
@@ -470,6 +585,54 @@ def reset_paper_trading_account(account_id: str) -> dict[str, Any]:
         prefer="return=representation",
     )
     return normalize_value({"account_id": account_id, "result": result})
+
+
+def build_feature_status() -> dict[str, dict[str, str | bool]]:
+    ai_status = "ready"
+    ai_reason = "뉴스 수집과 Gemini 분석을 모두 사용할 수 있습니다."
+    if not GEMINI_API_KEY and not gemini_analyzer.NEWS_API_KEY:
+        ai_status = "limited"
+        ai_reason = "GEMINI_API_KEY와 NEWS_API_KEY가 없어 실시간 분석이 제한됩니다."
+    elif not GEMINI_API_KEY:
+        ai_status = "limited"
+        ai_reason = "GEMINI_API_KEY가 없어 뉴스가 있어도 AI 요약을 대체 문구로 처리합니다."
+    elif not gemini_analyzer.NEWS_API_KEY:
+        ai_status = "limited"
+        ai_reason = "NEWS_API_KEY가 없어 최신 뉴스 수집 범위가 제한됩니다."
+
+    paper_status = "ready" if is_supabase_configured() else "limited"
+    paper_reason = (
+        "Supabase가 연결되어 모의투자 상태와 주문을 저장할 수 있습니다."
+        if is_supabase_configured()
+        else "SUPABASE_URL 또는 SUPABASE_SERVICE_ROLE_KEY가 없어 모의투자 기능이 동작하지 않습니다."
+    )
+
+    return {
+        "sector_flow": {
+            "status": "ready",
+            "summary": "공용 시세 데이터 기반 섹터 흐름 조회가 가능합니다.",
+            "available": True,
+        },
+        "ai_analysis": {
+            "status": ai_status,
+            "summary": ai_reason,
+            "available": True,
+        },
+        "paper_trading": {
+            "status": paper_status,
+            "summary": (
+                "세션 기반 모의 계정으로 상태와 주문을 이어서 저장할 수 있습니다."
+                if is_supabase_configured()
+                else paper_reason
+            ),
+            "available": is_supabase_configured(),
+        },
+        "strategy_simulation": {
+            "status": "ready",
+            "summary": "단일 백테스트와 전략 최적화 실행이 가능합니다.",
+            "available": True,
+        },
+    }
 
 
 def serialize_portfolio(portfolio: pd.DataFrame) -> list[dict[str, Any]]:
@@ -897,6 +1060,39 @@ def healthz_get() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/app-config")
+def app_config() -> dict[str, Any]:
+    return {
+        "auth_mode": "session_account",
+        "cors_allowed_origins": parse_allowed_origins(CORS_ALLOW_ORIGINS),
+        "features": build_feature_status(),
+    }
+
+
+@app.post("/session/bootstrap")
+def session_bootstrap(x_app_session: str | None = Header(default=None, alias="X-App-Session")) -> dict[str, Any]:
+    if x_app_session:
+        account_id = decode_session_token(resolve_paper_session_token(x_app_session))
+    else:
+        account_id = build_session_account_id()
+
+    return {
+        "auth_mode": "session_account",
+        "account_id": account_id,
+        "session_token": encode_session_token(account_id),
+    }
+
+
+@app.post("/session/rotate")
+def session_rotate() -> dict[str, Any]:
+    account_id = build_session_account_id()
+    return {
+        "auth_mode": "session_account",
+        "account_id": account_id,
+        "session_token": encode_session_token(account_id),
+    }
+
+
 @app.head("/healthz", include_in_schema=False, status_code=status.HTTP_200_OK)
 def healthz_head() -> Response:
     return Response(status_code=status.HTTP_200_OK)
@@ -963,21 +1159,29 @@ def quote_data(ticker: str, market: str = "us", krx_exchange: str = "auto") -> d
 
 
 @app.get("/paper-trading/state")
-def paper_trading_state(account_id: str) -> dict[str, Any]:
-    try:
-        normalized_account_id = normalize_paper_account_id(account_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+def paper_trading_state(
+    account_id: str | None = None,
+    x_app_session: str | None = Header(default=None, alias="X-App-Session"),
+) -> dict[str, Any]:
+    normalized_account_id = resolve_paper_account_id(account_id, x_app_session)
     return get_paper_trading_state(normalized_account_id)
 
 
 @app.post("/paper-trading/order")
-def paper_trading_order(request: PaperTradingOrderRequest) -> dict[str, Any]:
+def paper_trading_order(
+    request: PaperTradingOrderRequest,
+    x_app_session: str | None = Header(default=None, alias="X-App-Session"),
+) -> dict[str, Any]:
+    request.account_id = resolve_paper_account_id(request.account_id, x_app_session)
     return execute_paper_trade(request)
 
 
 @app.post("/paper-trading/reset")
-def paper_trading_reset(request: PaperTradingAccountRequest) -> dict[str, Any]:
+def paper_trading_reset(
+    request: PaperTradingAccountRequest,
+    x_app_session: str | None = Header(default=None, alias="X-App-Session"),
+) -> dict[str, Any]:
+    request.account_id = resolve_paper_account_id(request.account_id, x_app_session)
     return reset_paper_trading_account(request.account_id)
 
 
