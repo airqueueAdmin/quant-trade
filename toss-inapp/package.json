@@ -5,19 +5,25 @@
   "description": "Toss in-app frontend for the quant project.",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc -p tsconfig.app.json && vite build",
-    "preview": "vite preview"
+    "dev": "granite dev",
+    "dev:web": "vite",
+    "build": "ait build",
+    "build:web": "vite build",
+    "preview": "vite preview",
+    "deploy": "ait deploy"
   },
   "keywords": [],
   "author": "",
   "license": "UNLICENSED",
   "dependencies": {
+    "@apps-in-toss/web-bridge": "^2.10.2",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-router-dom": "^7.18.0"
   },
   "devDependencies": {
+    "@apps-in-toss/cli": "^2.10.2",
+    "@apps-in-toss/web-framework": "^2.10.2",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.3",

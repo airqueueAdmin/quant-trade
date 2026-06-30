@@ -11,6 +11,7 @@ services:
       SUPABASE_URL: ${SUPABASE_URL:-}
       SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-}
       SUPABASE_DB_SCHEMA: ${SUPABASE_DB_SCHEMA:-public}
+      APPS_IN_TOSS_APP_NAME: ${APPS_IN_TOSS_APP_NAME:-glance-invest}
       CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-http://localhost:4173,http://127.0.0.1:4173,http://localhost:5173,http://127.0.0.1:5173}
     volumes:
       - ./backend:/app

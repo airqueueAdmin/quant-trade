@@ -8,7 +8,8 @@ ENV VITE_BACKEND_URL=${VITE_BACKEND_URL}
 COPY package.json package-lock.json ./
 RUN npm ci
 
-COPY tsconfig.json tsconfig.app.json tsconfig.node.json vite.config.ts index.html ./
+COPY tsconfig.json tsconfig.app.json tsconfig.node.json vite.config.ts index.html granite.config.ts ./
+COPY .env.production ./.env.production
 COPY public ./public
 COPY src ./src
 

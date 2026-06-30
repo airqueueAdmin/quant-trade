@@ -1,55 +1,6 @@
-import { useEffect, useState } from 'react'
-
 import { StatusCard } from '../../components/StatusCard'
-import { apiClient } from '../../shared/api/client'
-import { ApiError } from '../../shared/api/http'
-import type { AppConfig } from '../../shared/api/types'
 
 export function HomePage() {
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [appConfig, setAppConfig] = useState<AppConfig | null>(null)
-  const [backendHealthy, setBackendHealthy] = useState(false)
-
-  useEffect(() => {
-    const abortController = new AbortController()
-
-    async function loadAppStatus() {
-      setLoading(true)
-      setError(null)
-
-      try {
-        const [healthResponse, configResponse] = await Promise.all([
-          apiClient.health(),
-          apiClient.appConfig(abortController.signal),
-        ])
-        setBackendHealthy(healthResponse.status === 'ok')
-        setAppConfig(configResponse)
-      } catch (caughtError) {
-        if (abortController.signal.aborted) {
-          return
-        }
-        setBackendHealthy(false)
-        setAppConfig(null)
-
-        if (caughtError instanceof ApiError) {
-          setError(caughtError.detail)
-        } else if (caughtError instanceof Error) {
-          setError(caughtError.message)
-        } else {
-          setError('서비스 준비 상태를 확인하지 못했습니다.')
-        }
-      } finally {
-        if (!abortController.signal.aborted) {
-          setLoading(false)
-        }
-      }
-    }
-
-    void loadAppStatus()
-    return () => abortController.abort()
-  }, [])
-
   return (
     <main className="page-shell">
       <section className="hero-section hero-section--home">
@@ -76,9 +27,6 @@ export function HomePage() {
           </div>
         </dl>
       </section>
-
-      {loading ? <div className="state-box">서비스 준비 상태를 확인하는 중입니다...</div> : null}
-      {!loading && error ? <div className="state-box state-box--error">{error}</div> : null}
 
       <section className="status-grid" aria-label="주요 서비스 소개">
         <StatusCard
@@ -121,21 +69,6 @@ export function HomePage() {
           <li>마지막으로 모의투자에서 실제 주문 전 흐름을 연습합니다.</li>
         </ul>
       </section>
-
-      {!loading && !error && appConfig ? (
-        <>
-          <section className="content-panel">
-            <p className="content-panel__eyebrow">현재 이용 가능 상태</p>
-            <h3 className="content-panel__title">지금 이 환경에서 바로 체험할 수 있습니다.</h3>
-            <ul className="bullet-list bullet-list--spaced">
-              <li>서비스 연결 상태: {backendHealthy ? '정상' : '확인 필요'}</li>
-              <li>AI 분석: {appConfig.features.ai_analysis.summary}</li>
-              <li>모의투자: {appConfig.features.paper_trading.summary}</li>
-              <li>전략 시뮬레이션: {appConfig.features.strategy_simulation.summary}</li>
-            </ul>
-          </section>
-        </>
-      ) : null}
     </main>
   )
 }

@@ -35,11 +35,14 @@ from strategies.rsi import rsi_strategy
 
 load_dotenv()
 
+APPS_IN_TOSS_APP_NAME = (os.getenv("APPS_IN_TOSS_APP_NAME") or "glance-invest").strip() or "glance-invest"
 DEFAULT_CORS_ORIGINS = [
     "http://localhost:4173",
     "http://127.0.0.1:4173",
     "http://localhost:5173",
     "http://127.0.0.1:5173",
+    f"https://{APPS_IN_TOSS_APP_NAME}.apps.tossmini.com",
+    f"https://{APPS_IN_TOSS_APP_NAME}.private-apps.tossmini.com",
 ]
 DEFAULT_PAPER_SEED_CASH_KRW = 10_000_000.0
 SUPABASE_URL = (os.getenv("SUPABASE_URL") or "").rstrip("/")
@@ -54,7 +57,13 @@ def parse_allowed_origins(raw_value: str) -> list[str]:
     if not raw_value:
         return DEFAULT_CORS_ORIGINS
     origins = [item.strip() for item in raw_value.split(",") if item.strip()]
-    return origins or DEFAULT_CORS_ORIGINS
+    if not origins:
+        return DEFAULT_CORS_ORIGINS
+    merged: list[str] = []
+    for origin in [*origins, *DEFAULT_CORS_ORIGINS]:
+        if origin not in merged:
+            merged.append(origin)
+    return merged
 
 
 app = FastAPI(title="Quant Trading API")

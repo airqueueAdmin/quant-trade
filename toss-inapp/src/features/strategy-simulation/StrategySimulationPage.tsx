@@ -590,11 +590,11 @@ export function StrategySimulationPage() {
           >
             {loading
               ? mode === 'backtest'
-                ? '백테스트 실행 중...'
-                : '전략 최적화 실행 중...'
+                ? '실행 중...'
+                : '최적화 중...'
               : mode === 'backtest'
-                ? '지금 백테스트 실행'
-                : '지금 최적화 실행'}
+                ? '전략 실행'
+                : '최적화 실행'}
           </button>
         </div>
 
@@ -1106,20 +1106,6 @@ export function StrategySimulationPage() {
             )
           ) : null}
 
-          <button
-            type="button"
-            className="primary-action"
-            onClick={() => void (mode === 'backtest' ? handleRunBacktest() : handleRunOptimization())}
-            disabled={loading}
-          >
-            {loading
-              ? mode === 'backtest'
-                ? '백테스트 실행 중...'
-                : '전략 최적화 실행 중...'
-              : mode === 'backtest'
-                ? '백테스트 실행'
-                : '전략 최적화 실행'}
-          </button>
         </div>
 
         {error ? <div className="state-box state-box--error">{error}</div> : null}
