@@ -13,14 +13,18 @@ from market_utils import (
     ticker_help_text,
     ticker_input_label,
 )
+from ui_helpers import inject_stage_banner_styles, render_stage_banner
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000")
 
 st.set_page_config(layout="wide", page_title="AI 시장 분석")
 inject_google_analytics(os.getenv("GA_MEASUREMENT_ID") or os.getenv("GA_TAG_ID"), "ai_analysis")
+inject_stage_banner_styles()
 
 st.title("🤖 AI 시장 분석")
-st.write("최신 뉴스를 기반으로, 미국주식과 국내주식에 대한 시장의 감정을 분석해 드립니다.")
+render_stage_banner("2단계", "재료와 뉴스 해석", "움직인 이유가 단발성인지, 내일까지도 이어질지 빠르게 읽는 메뉴입니다.")
+st.write("종가베팅 후보 종목에 붙은 뉴스와 시장 심리를 빠르게 요약하는 **재료 해석 서포트 시스템**입니다. 내일까지 재료가 이어질지 판단할 때 보조 지표로 쓰기 좋습니다.")
+st.info("쉽게 말해 '이 종목이 왜 움직였는지'와 '그 이유가 내일까지도 남아 있을지'를 빠르게 읽는 메뉴입니다.")
 
 # --- Initialize session state ---
 if 'step_ai' not in st.session_state:
@@ -151,10 +155,6 @@ if st.session_state.step_ai >= 2:
             st.subheader("📰 관련 뉴스 목록")
             for article in sentiment_results.get('articles', []):
                 st.markdown(f"- [{article['title']}]({article['url']})")
-
-            if attempted_queries and not sentiment_results.get("articles"):
-                with st.expander("시도한 뉴스 검색 조건"):
-                    st.json(attempted_queries)
 
         except requests.exceptions.RequestException as e:
             st.error(f"백엔드 서버 연결에 실패했습니다: {e}")

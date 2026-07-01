@@ -7,6 +7,7 @@ import streamlit as st
 
 from ga import inject_google_analytics
 from market_utils import MARKET_OPTIONS, market_display_name
+from ui_helpers import inject_stage_banner_styles, render_stage_banner
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000")
 METRIC_OPTIONS = {
@@ -19,6 +20,7 @@ METRIC_OPTIONS = {
 
 st.set_page_config(layout="wide", page_title="주요 섹터 흐름")
 inject_google_analytics(os.getenv("GA_MEASUREMENT_ID") or os.getenv("GA_TAG_ID"), "sector_flow")
+inject_stage_banner_styles()
 
 st.markdown(
     """
@@ -124,7 +126,9 @@ def build_sector_frame(sectors: list[dict]) -> pd.DataFrame:
 
 
 st.title("📊 주요 섹터 흐름")
-st.write("지금 시장에서 어느 섹터로 자금이 붙고 있는지, 최근 수익률과 추세 기준으로 빠르게 확인하는 메뉴입니다.")
+render_stage_banner("1단계", "시장에서 강한 흐름 찾기", "종가베팅은 종목보다 먼저 시장 흐름을 보는 게 쉬워서, 초보자는 여기서 출발하는 편이 좋습니다.")
+st.write("종가베팅 전에 오늘 시장에서 끝까지 강했던 섹터를 먼저 추리는 **1차 흐름 확인 서포트 시스템**입니다. 최근 수익률과 추세 기준으로 어디에 자금이 남았는지 빠르게 확인할 수 있습니다.")
+st.info("처음 보는 사람은 여기서 출발하면 됩니다. 어떤 종목을 볼지 모르겠다면, 먼저 어느 섹터에 돈이 붙었는지부터 확인하세요.")
 
 control_col1, control_col2 = st.columns([1.2, 1])
 with control_col1:

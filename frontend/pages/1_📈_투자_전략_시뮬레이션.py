@@ -19,6 +19,7 @@ from market_utils import (
 )
 from fx_utils import get_usdkrw_rate
 from ga import inject_google_analytics
+from ui_helpers import inject_stage_banner_styles, render_stage_banner
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000")
 FX_RATE = get_usdkrw_rate()
@@ -73,9 +74,12 @@ def format_optimization_results(all_optimization_results: list[dict]) -> pd.Data
 
 st.set_page_config(layout="wide", page_title="투자 전략 시뮬레이션")
 inject_google_analytics(os.getenv("GA_MEASUREMENT_ID") or os.getenv("GA_TAG_ID"), "backtesting")
+inject_stage_banner_styles()
 
 st.title("📈 투자 전략 시뮬레이션")
-st.write("과거 데이터를 기반으로, 미국주식과 국내주식에 다양한 투자 전략을 적용했을 때 어떤 성과를 냈을지 테스트해볼 수 있습니다.")
+render_stage_banner("보조 검증", "과거 데이터로 검토", "지금 떠오른 종가베팅 아이디어가 과거에도 어느 정도 통했는지 백업 차원에서 확인합니다.")
+st.write("종가베팅이나 단기 아이디어가 과거 데이터에서 어느 정도 통했는지 검증하는 **전략 검증 백업 시스템**입니다. 시장 해석이 아니라 전략 검증에 초점을 둡니다.")
+st.info("이 메뉴는 지금 좋아 보이는 아이디어가 과거에도 비슷하게 통했는지 확인할 때 사용합니다. 처음이라면 먼저 '주요 섹터 흐름'과 'AI 시장 분석'을 본 뒤 넘어오는 편이 이해하기 쉽습니다.")
 
 # --- Sidebar for All Controls ---
 st.sidebar.header("백테스트 설정")

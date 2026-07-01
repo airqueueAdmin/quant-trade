@@ -20,6 +20,12 @@ DEFAULT_PLAN_RULES = {
 
 st.set_page_config(layout="wide", page_title="실전 매매 가이드")
 inject_google_analytics(os.getenv("GA_MEASUREMENT_ID") or os.getenv("GA_TAG_ID"), "trade_guide")
+
+st.title("🧭 실전 매매 가이드")
+st.warning("이 메뉴는 현재 잠시 비활성화되어 있습니다.")
+st.info("서비스가 종가베팅 중심으로 재정렬되면서, 이 메뉴는 현재 흐름과 맞지 않아 잠시 막아둔 상태입니다. 사이드바에는 남아 있지만 지금은 선택해도 내용을 제공하지 않습니다.")
+st.stop()
+
 if FX_RATE:
     st.caption(f"환율 기준: 1 USD = {FX_RATE['rate']:,.2f} KRW")
 

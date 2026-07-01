@@ -10,6 +10,11 @@ FX_RATE = get_usdkrw_rate()
 st.set_page_config(layout="wide", page_title="소액투자 ETF 가이드")
 inject_google_analytics(os.getenv("GA_MEASUREMENT_ID") or os.getenv("GA_TAG_ID"), "etf_guide")
 
+st.title("📗 소액투자 ETF 가이드")
+st.warning("이 메뉴는 현재 잠시 비활성화되어 있습니다.")
+st.info("서비스가 종가베팅 중심으로 재정렬되면서, 이 메뉴는 현재 흐름과 맞지 않아 잠시 막아둔 상태입니다. 사이드바에는 남아 있지만 지금은 선택해도 내용을 제공하지 않습니다.")
+st.stop()
+
 
 def estimate_shares(budget, price):
     if budget <= 0 or price <= 0:

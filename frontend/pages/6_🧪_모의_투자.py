@@ -6,12 +6,14 @@ import streamlit as st
 
 from ga import inject_google_analytics
 from market_utils import get_common_krx_companies, search_krx_companies
+from ui_helpers import inject_stage_banner_styles, render_stage_banner
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000")
 DEFAULT_ACCOUNT_ID = "paper-demo"
 
 st.set_page_config(layout="wide", page_title="모의 투자")
 inject_google_analytics(os.getenv("GA_MEASUREMENT_ID") or os.getenv("GA_TAG_ID"), "paper_trading")
+inject_stage_banner_styles()
 
 st.markdown(
     """
@@ -76,6 +78,12 @@ def get_paper_state(account_id: str) -> dict:
     )
     response.raise_for_status()
     return response.json()
+
+
+st.title("🧪 모의 투자")
+render_stage_banner("4단계", "다음 날 대응 연습", "후보를 고른 뒤 실제 돈을 넣기 전에, 다음 날 어떤 식으로 대응할지 미리 연습하는 메뉴입니다.")
+st.write("종가 기준으로 고른 후보를 다음 날 어떻게 대응할지 연습하는 **대응 점검 서포트 시스템**입니다. 실시간 매매 도구라기보다 종가베팅 아이디어 복기와 대응 점검에 가깝습니다.")
+st.info("이 메뉴는 실제 돈을 넣기 전에 '내가 내일 어떻게 대응할지'를 연습하는 곳입니다. 종가베팅 후보를 정한 뒤 마지막 점검용으로 쓰면 됩니다.")
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -191,7 +199,6 @@ def build_trades_frame(trades: list[dict]) -> pd.DataFrame:
 if "paper_account_id" not in st.session_state:
     st.session_state.paper_account_id = DEFAULT_ACCOUNT_ID
 
-st.title("🧪 모의 투자")
 st.caption("국내주식 전용 모의투자 메뉴입니다. 같은 계좌 ID를 쓰면 다른 브라우저에서도 이어서 볼 수 있습니다.")
 
 top_col1, top_col2 = st.columns([1.4, 1])
