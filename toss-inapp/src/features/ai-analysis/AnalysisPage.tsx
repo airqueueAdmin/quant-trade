@@ -155,11 +155,11 @@ export function AnalysisPage() {
   return (
     <main className="page-shell">
       <section className="content-panel">
-        <p className="content-panel__eyebrow">시장 흐름 읽기</p>
+        <p className="content-panel__eyebrow">종가베팅 2단계</p>
         <h2 className="content-panel__title">AI 시장 분석</h2>
         <p className="content-panel__description">
-          최신 뉴스 기반 감성 점수와 핵심 요약을 인앱에서 바로 확인할 수 있도록 재구성한
-          화면입니다.
+          종가베팅 후보 종목에 붙은 뉴스와 시장 심리를 빠르게 요약하는 재료 해석
+          서포트 화면입니다.
         </p>
       </section>
 

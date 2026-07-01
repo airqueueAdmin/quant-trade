@@ -47,6 +47,15 @@ export type QuoteSnapshot = {
   change_pct: number
 }
 
+export type StockHistoryRow = {
+  Date: string
+  Open?: number
+  High?: number
+  Low?: number
+  Close?: number
+  Volume?: number
+}
+
 export type SentimentArticle = {
   title: string
   url: string

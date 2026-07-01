@@ -29,7 +29,7 @@ body,
 
 body {
   margin: 0;
-  word-break: keep-all;
+  word-break: normal;
   overflow-wrap: anywhere;
 }
 
@@ -102,7 +102,8 @@ select {
   margin: 12px 0 0;
   color: #4e5968;
   font-size: 14px;
-  word-break: keep-all;
+  word-break: normal;
+  overflow-wrap: anywhere;
 }
 
 .app-content {
@@ -149,6 +150,7 @@ select {
 
 .page-shell {
   padding: 12px 20px 24px;
+  min-width: 0;
 }
 
 .hero-section {
@@ -188,7 +190,8 @@ select {
   max-width: 680px;
   font-size: 16px;
   color: #4e5968;
-  word-break: keep-all;
+  word-break: normal;
+  overflow-wrap: anywhere;
 }
 
 .meta-list {
@@ -234,6 +237,65 @@ select {
   margin-top: 18px;
 }
 
+.journey-list,
+.diagnostic-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.journey-item,
+.diagnostic-item {
+  display: grid;
+  gap: 6px;
+  padding: 16px;
+  border-radius: 20px;
+  background: #ffffff;
+  border: 1px solid rgba(25, 31, 40, 0.06);
+}
+
+.journey-item {
+  grid-template-columns: auto 1fr;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.journey-item__step {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: #191f28;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.journey-item strong,
+.diagnostic-item strong {
+  color: #191f28;
+  font-size: 15px;
+}
+
+.journey-item p,
+.diagnostic-item p {
+  margin: 0;
+  color: #4e5968;
+  font-size: 14px;
+  line-height: 1.55;
+  word-break: normal;
+  overflow-wrap: anywhere;
+}
+
+.diagnostic-item span {
+  color: #1b64da;
+  font-size: 28px;
+  font-weight: 800;
+  line-height: 1;
+}
+
 .checklist-grid {
   display: grid;
   gap: 12px;
@@ -270,12 +332,14 @@ select {
   color: #4e5968;
   font-size: 14px;
   line-height: 1.55;
-  word-break: keep-all;
+  word-break: normal;
+  overflow-wrap: anywhere;
 }
 
 .content-panel {
   margin-top: 18px;
   padding: 22px 20px;
+  min-width: 0;
   border-radius: 24px;
   background: rgba(255, 255, 255, 0.84);
   border: 1px solid rgba(25, 31, 40, 0.06);
@@ -303,7 +367,8 @@ select {
   font-size: 15px;
   color: #4e5968;
   line-height: 1.55;
-  word-break: keep-all;
+  word-break: normal;
+  overflow-wrap: anywhere;
 }
 
 .content-panel--nested {
@@ -318,12 +383,21 @@ select {
   align-items: center;
 }
 
+.toolbar-row--stacked {
+  flex-direction: column;
+  align-items: stretch;
+}
+
 .segmented-control {
   display: inline-flex;
   padding: 4px;
   border-radius: 999px;
   background: #eef2f6;
   gap: 4px;
+}
+
+.segmented-control--full {
+  width: 100%;
 }
 
 .segmented-control__button {
@@ -361,11 +435,17 @@ select {
   font-size: 14px;
   color: #6b7684;
   line-height: 1.5;
-  word-break: keep-all;
+  word-break: normal;
+  overflow-wrap: anywhere;
 }
 
 .helper-text--tight {
   margin-top: 8px;
+}
+
+.helper-text--relaxed-break {
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .state-box {
@@ -375,7 +455,8 @@ select {
   background: #f2f4f6;
   color: #4e5968;
   line-height: 1.5;
-  word-break: keep-all;
+  word-break: normal;
+  overflow-wrap: anywhere;
 }
 
 .state-box--error {
@@ -469,6 +550,10 @@ select {
   margin-top: 16px;
 }
 
+.form-stack > * {
+  min-width: 0;
+}
+
 .range-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -515,6 +600,14 @@ select {
   gap: 14px;
 }
 
+.field-grid > * {
+  min-width: 0;
+}
+
+.field-grid--single-when-narrow {
+  grid-template-columns: 1fr;
+}
+
 .field-label {
   display: block;
   margin-bottom: 8px;
@@ -527,6 +620,7 @@ select {
 
 .text-field {
   width: 100%;
+  min-width: 0;
   min-height: 48px;
   padding: 0 14px;
   border-radius: 16px;
@@ -539,6 +633,14 @@ select {
   display: grid;
   grid-template-columns: 1fr auto;
   gap: 10px;
+}
+
+.input-action-row > * {
+  min-width: 0;
+}
+
+.input-action-row--stacked {
+  grid-template-columns: 1fr;
 }
 
 .input-action-row--wide {
@@ -565,8 +667,12 @@ select {
 .chip-row {
   display: flex;
   gap: 8px;
+  width: 100%;
+  max-width: 100%;
   overflow-x: auto;
+  overflow-y: hidden;
   padding-top: 12px;
+  padding-bottom: 4px;
 }
 
 .chip {
@@ -595,6 +701,7 @@ select {
 .search-result-item {
   display: grid;
   gap: 4px;
+  min-width: 0;
   text-align: left;
   border: 1px solid rgba(25, 31, 40, 0.08);
   background: #ffffff;
@@ -603,9 +710,16 @@ select {
   color: #191f28;
 }
 
+.search-result-item strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .search-result-item span {
   color: #6b7684;
   font-size: 13px;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .paper-actions {
@@ -645,7 +759,8 @@ select {
   color: #4e5968;
   font-size: 14px;
   line-height: 1.55;
-  word-break: keep-all;
+  word-break: normal;
+  overflow-wrap: anywhere;
 }
 
 .secondary-action--danger {

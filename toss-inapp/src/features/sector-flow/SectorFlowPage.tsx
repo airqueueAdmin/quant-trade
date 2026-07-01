@@ -106,11 +106,11 @@ export function SectorFlowPage() {
   return (
     <main className="page-shell">
       <section className="content-panel">
-        <p className="content-panel__eyebrow">오늘의 시장</p>
+        <p className="content-panel__eyebrow">종가베팅 1단계</p>
         <h2 className="content-panel__title">주요 섹터 흐름</h2>
         <p className="content-panel__description">
-          지금 시장에서 어느 섹터가 상대적으로 강하고 약한지 최근 수익률과 추세 기준으로
-          빠르게 확인하는 인앱용 화면입니다.
+          종가베팅 전에 오늘 시장에서 끝까지 강했던 섹터를 먼저 추리는 흐름 확인
+          서포트 화면입니다.
         </p>
       </section>
 

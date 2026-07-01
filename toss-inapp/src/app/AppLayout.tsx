@@ -16,12 +16,12 @@ export function AppLayout() {
         <header className="app-header">
           <div className="app-header__topline">
             <p className="app-header__eyebrow">한눈투자</p>
-            <span className="app-header__pill">투자 연습</span>
+            <span className="app-header__pill">종가베팅 준비</span>
           </div>
-          <h1 className="app-header__title">시장을 읽고, 전략을 보고, 모의로 연습하는 투자 앱</h1>
+          <h1 className="app-header__title">내일 이어질 수급을 찾는 종가베팅 지원 앱</h1>
           <p className="app-header__description">
-            복잡한 투자 도구를 한 화면에 몰아넣지 않고, 섹터 흐름부터 AI 분석, 종가베팅,
-            전략 시뮬레이션, 모의투자까지 모바일에서 이해하기 쉽게 이어 붙였습니다.
+            종가베팅이 중심이고, 섹터 흐름과 AI 분석은 후보 발굴용, 전략 연습과 모의투자는
+            검증과 대응 점검용으로 이어지게 구성했습니다.
           </p>
         </header>
 

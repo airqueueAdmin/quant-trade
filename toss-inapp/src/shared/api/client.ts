@@ -17,6 +17,7 @@ import type {
   RSIOptimizationRequest,
   SectorSnapshot,
   SessionBootstrapResponse,
+  StockHistoryRow,
   SentimentResult,
 } from './types'
 
@@ -68,6 +69,31 @@ export const apiClient = {
   ) {
     return apiRequest<QuoteSnapshot>(`/quote/${encodeURIComponent(ticker)}`, {
       params: { market, krx_exchange: krxExchange },
+      signal,
+    })
+  },
+
+  stockData(
+    ticker: string,
+    startDate: string,
+    endDate: string,
+    market: Market,
+    krxExchange: KrxExchange = 'auto',
+    signal?: AbortSignal,
+  ) {
+    return apiRequest<{
+      ticker: string
+      resolved_ticker: string
+      market: Market
+      krx_exchange: KrxExchange
+      rows: StockHistoryRow[]
+    }>(`/stock/${encodeURIComponent(ticker)}`, {
+      params: {
+        start_date: startDate,
+        end_date: endDate,
+        market,
+        krx_exchange: krxExchange,
+      },
       signal,
     })
   },

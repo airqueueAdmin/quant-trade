@@ -1,0 +1,1 @@
+export { ClosingBetPage } from './ClosingBetPage'

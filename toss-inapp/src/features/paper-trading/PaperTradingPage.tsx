@@ -444,11 +444,11 @@ export function PaperTradingPage() {
   return (
     <main className="page-shell">
       <section className="content-panel">
-        <p className="content-panel__eyebrow">실전 전 연습</p>
+        <p className="content-panel__eyebrow">종가베팅 4단계</p>
         <h2 className="content-panel__title">모의투자</h2>
         <p className="content-panel__description">
-          국내주식 기준으로 현재가 확인, 모의 주문, 보유 종목, 거래 내역을 인앱에서
-          이어서 볼 수 있도록 재구성한 화면입니다.
+          종가 기준으로 고른 후보를 다음 날 어떻게 대응할지 연습하는 대응 점검
+          서포트 화면입니다.
         </p>
       </section>
 
