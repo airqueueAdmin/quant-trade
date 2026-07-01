@@ -72,6 +72,26 @@ def format_optimization_results(all_optimization_results: list[dict]) -> pd.Data
     df = pd.DataFrame(rows)
     return df.rename(columns={column: label_parameter(column) if column in PARAMETER_LABELS else label_metric(column) for column in df.columns})
 
+
+def friendly_request_error(exc: requests.exceptions.RequestException, ticker: str) -> str:
+    response = getattr(exc, "response", None)
+    if response is None:
+        return "백엔드 서버에 연결하지 못했습니다. 잠시 후 다시 시도하세요."
+
+    detail = ""
+    try:
+        detail = str(response.json().get("detail", "")).strip()
+    except Exception:
+        detail = ""
+
+    if response.status_code == 404:
+        return f"'{ticker}' 종목을 찾지 못했습니다. 티커나 종목코드를 다시 확인하세요."
+    if response.status_code == 400:
+        return detail or "입력값이 올바르지 않습니다. 날짜와 파라미터를 다시 확인하세요."
+    if response.status_code >= 500:
+        return "데이터를 불러오는 중 문제가 발생했습니다. 잠시 후 다시 시도하세요."
+    return detail or "요청을 처리하지 못했습니다. 입력값을 다시 확인하세요."
+
 st.set_page_config(layout="wide", page_title="투자 전략 시뮬레이션")
 inject_google_analytics(os.getenv("GA_MEASUREMENT_ID") or os.getenv("GA_TAG_ID"), "backtesting")
 inject_stage_banner_styles()
@@ -394,11 +414,6 @@ if st.sidebar.button("실행"):
                 else:
                     st.info("최적화 결과가 없습니다.")
         except requests.exceptions.RequestException as e:
-            st.error(f"백엔드 서버 연결에 실패했습니다: {e}")
-            if getattr(e, "response", None) is not None:
-                try:
-                    st.error(e.response.json().get("detail", ""))
-                except Exception:
-                    pass
+            st.error(friendly_request_error(e, ticker_backtest))
         except Exception as e:
             st.error(f"오류가 발생했습니다: {e}")

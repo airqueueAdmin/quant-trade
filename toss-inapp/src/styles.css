@@ -227,6 +227,52 @@ select {
   margin-top: 18px;
 }
 
+.analysis-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.checklist-grid {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.slider-card {
+  display: grid;
+  gap: 10px;
+  padding: 18px;
+  border-radius: 22px;
+  background: #ffffff;
+  border: 1px solid rgba(25, 31, 40, 0.06);
+}
+
+.slider-card__label {
+  color: #6b7684;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.slider-card__value {
+  font-size: 28px;
+  line-height: 1;
+  letter-spacing: -0.03em;
+}
+
+.slider-card__input {
+  width: 100%;
+}
+
+.slider-card__description {
+  margin: 0;
+  color: #4e5968;
+  font-size: 14px;
+  line-height: 1.55;
+  word-break: keep-all;
+}
+
 .content-panel {
   margin-top: 18px;
   padding: 22px 20px;
@@ -1096,6 +1142,7 @@ select {
 
   .meta-list,
   .status-grid,
+  .analysis-summary-grid,
   .sector-card-grid,
   .sector-card-grid--compact,
   .paper-summary-grid,

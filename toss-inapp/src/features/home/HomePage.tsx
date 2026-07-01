@@ -22,8 +22,8 @@ export function HomePage() {
             <dd>AI로 핵심만 빠르게 요약</dd>
           </div>
           <div>
-            <dt>직접 연습</dt>
-            <dd>전략 검증부터 모의투자까지</dd>
+            <dt>종가 점검</dt>
+            <dd>내일 이어질 수급 선별</dd>
           </div>
         </dl>
       </section>
@@ -51,6 +51,13 @@ export function HomePage() {
           meta="전략 시뮬레이션"
         />
         <StatusCard
+          title="종가베팅 후보 추리기"
+          description="오늘 끝까지 살아남은 수급이 내일까지 이어질지 체크리스트와 점수로 나눠 보며, 종가 매매 후보를 더 엄격하게 걸러낼 수 있습니다."
+          tag="단기 전략"
+          tone="positive"
+          meta="종가베팅"
+        />
+        <StatusCard
           title="실전 전 모의 연습"
           description="국내주식 기준으로 현재가 확인, 주문 연습, 보유 종목 확인까지 이어서 보며 실제 매매 전에 흐름을 점검할 수 있습니다."
           tag="투자 연습"
@@ -65,6 +72,7 @@ export function HomePage() {
         <ul className="bullet-list bullet-list--spaced">
           <li>먼저 섹터 흐름에서 오늘 강한 시장 구간을 확인합니다.</li>
           <li>관심 종목이 생기면 AI 분석으로 뉴스와 투자 심리를 빠르게 요약합니다.</li>
+          <li>종가베팅에서 오늘 끝까지 남은 수급이 내일까지 이어질지 점검합니다.</li>
           <li>전략 시뮬레이션에서 백테스트와 최적화로 아이디어를 검증합니다.</li>
           <li>마지막으로 모의투자에서 실제 주문 전 흐름을 연습합니다.</li>
         </ul>
