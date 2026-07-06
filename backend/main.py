@@ -61,6 +61,10 @@ SMTP_PASSWORD = os.getenv("SMTP_PASSWORD") or ""
 SMTP_FROM_EMAIL = (os.getenv("SMTP_FROM_EMAIL") or SMTP_USERNAME or "").strip()
 SMTP_USE_TLS = (os.getenv("SMTP_USE_TLS") or "true").strip().lower() not in {"0", "false", "no"}
 NOTIFICATION_DISPATCH_TOKEN = (os.getenv("NOTIFICATION_DISPATCH_TOKEN") or "").strip()
+APPS_IN_TOSS_CERT_PATH = (os.getenv("APPS_IN_TOSS_CERT_PATH") or "").strip()
+APPS_IN_TOSS_KEY_PATH = (os.getenv("APPS_IN_TOSS_KEY_PATH") or "").strip()
+TOSS_SMART_MESSAGE_BASE_URL = (os.getenv("TOSS_SMART_MESSAGE_BASE_URL") or "https://apps-in-toss-api.toss.im").rstrip("/")
+TOSS_SMART_MESSAGE_TEMPLATE_CODE = (os.getenv("TOSS_SMART_MESSAGE_TEMPLATE_CODE") or "glance-invest-reminder").strip() or "glance-invest-reminder"
 MARKET_TIMEZONES = {
     "krx": ZoneInfo("Asia/Seoul"),
     "us": ZoneInfo("America/New_York"),
@@ -352,6 +356,7 @@ class ClosingBetNotificationRequest(PaperTradingAccountRequest):
     krx_exchange: str = Field(default="auto")
     channel: str = Field(min_length=4, max_length=16)
     destination: str = Field(min_length=3, max_length=200)
+    toss_user_key: str | None = Field(default=None, min_length=8, max_length=256)
     threshold_score: int = Field(default=70, ge=0, le=100)
     active: bool = Field(default=True)
 
@@ -381,6 +386,14 @@ class ClosingBetNotificationRequest(PaperTradingAccountRequest):
             raise ValueError("destination is required")
         return normalized
 
+    @field_validator("toss_user_key")
+    @classmethod
+    def validate_toss_user_key(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
+
     @model_validator(mode="after")
     def normalize_market_ticker(self) -> "ClosingBetNotificationRequest":
         self.ticker = normalize_market_ticker_input(self.ticker, self.market)
@@ -402,6 +415,8 @@ class ClosingBetNotificationDispatchRequest(BaseModel):
 class ClosingBetNotificationTestRequest(PaperTradingAccountRequest):
     channel: str = Field(min_length=4, max_length=16)
     destination: str = Field(min_length=3, max_length=200)
+    toss_user_key: str | None = Field(default=None, min_length=8, max_length=256)
+    deployment_id: str | None = Field(default=None, min_length=8, max_length=64)
     ticker: str = Field(default="005930", min_length=1, max_length=32)
     market: str = Field(default="krx")
 
@@ -420,6 +435,22 @@ class ClosingBetNotificationTestRequest(PaperTradingAccountRequest):
         if not normalized:
             raise ValueError("destination is required")
         return normalized
+
+    @field_validator("toss_user_key")
+    @classmethod
+    def validate_test_toss_user_key(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
+
+    @field_validator("deployment_id")
+    @classmethod
+    def validate_test_deployment_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
 
     @field_validator("market")
     @classmethod
@@ -1115,6 +1146,65 @@ def is_email_configured() -> bool:
     return bool(SMTP_HOST and SMTP_FROM_EMAIL)
 
 
+def is_toss_smart_message_configured() -> bool:
+    return bool(APPS_IN_TOSS_CERT_PATH and APPS_IN_TOSS_KEY_PATH and TOSS_SMART_MESSAGE_TEMPLATE_CODE)
+
+
+def build_toss_smart_message_context(evaluation: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "ticker": str(evaluation.get("resolved_ticker") or evaluation.get("ticker") or ""),
+        "companyName": str(evaluation.get("company_name") or evaluation.get("resolved_ticker") or evaluation.get("ticker") or ""),
+        "score": str(evaluation.get("total_score") or ""),
+        "signalDate": str(evaluation.get("signal_date") or ""),
+        "market": str(evaluation.get("market") or ""),
+        "marketName": sector_market_name(str(evaluation.get("market") or "krx")),
+        "scenario": str(evaluation.get("scenario") or ""),
+        "scoreLabel": str(evaluation.get("score_label") or ""),
+    }
+
+
+def call_toss_smart_message_api(
+    path: str,
+    *,
+    toss_user_key: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    if not is_toss_smart_message_configured():
+        raise HTTPException(status_code=503, detail="스마트 발송 연동 설정이 없어 Toss 메시지를 보낼 수 없습니다.")
+
+    response = requests.post(
+        f"{TOSS_SMART_MESSAGE_BASE_URL}{path}",
+        headers={
+            "Content-Type": "application/json",
+            "x-toss-user-key": toss_user_key,
+        },
+        json=payload,
+        cert=(APPS_IN_TOSS_CERT_PATH, APPS_IN_TOSS_KEY_PATH),
+        timeout=20,
+    )
+
+    if response.status_code >= 400:
+        detail = response.text
+        try:
+            detail = str(response.json())
+        except Exception:
+            pass
+        raise HTTPException(status_code=503, detail=f"Toss 스마트 발송 요청에 실패했습니다: {detail}")
+
+    try:
+        result = response.json()
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail="Toss 스마트 발송 응답을 해석하지 못했습니다.") from exc
+
+    if result.get("resultType") == "FAIL":
+        error = result.get("error") or {}
+        raise HTTPException(
+            status_code=503,
+            detail=f"Toss 스마트 발송 실패: {error.get('errorCode', 'UNKNOWN')} / {error.get('reason', '요청에 실패했습니다.')}",
+        )
+    return result
+
+
 def send_email_notification(destination: str, subject: str, message: str) -> None:
     if not is_email_configured():
         raise HTTPException(status_code=503, detail="SMTP 설정이 없어 이메일 알림을 보낼 수 없습니다.")
@@ -1161,6 +1251,48 @@ def create_toss_inapp_alert_event(
     return normalize_value(rows[0])
 
 
+def send_toss_smart_test_message(
+    *,
+    account_id: str,
+    toss_user_key: str,
+    deployment_id: str,
+    evaluation: dict[str, Any],
+    notification_id: int | None = None,
+) -> dict[str, Any]:
+    subject, message = format_closing_bet_notification_message(evaluation, int(evaluation.get("total_score") or 0))
+    result = call_toss_smart_message_api(
+        "/api-partner/v1/apps-in-toss/messenger/send-test-message",
+        toss_user_key=toss_user_key,
+        payload={
+            "templateSetCode": TOSS_SMART_MESSAGE_TEMPLATE_CODE,
+            "deploymentId": deployment_id,
+            "context": build_toss_smart_message_context(evaluation),
+        },
+    )
+    create_toss_inapp_alert_event(account_id, "TEST", subject, message, evaluation, notification_id)
+    return normalize_value(result)
+
+
+def send_toss_smart_message(
+    *,
+    account_id: str,
+    toss_user_key: str,
+    evaluation: dict[str, Any],
+    notification_id: int | None = None,
+) -> dict[str, Any]:
+    subject, message = format_closing_bet_notification_message(evaluation, int(evaluation.get("total_score") or 0))
+    result = call_toss_smart_message_api(
+        "/api-partner/v1/apps-in-toss/messenger/send-message",
+        toss_user_key=toss_user_key,
+        payload={
+            "templateSetCode": TOSS_SMART_MESSAGE_TEMPLATE_CODE,
+            "context": build_toss_smart_message_context(evaluation),
+        },
+    )
+    create_toss_inapp_alert_event(account_id, "LIVE", subject, message, evaluation, notification_id)
+    return normalize_value(result)
+
+
 def send_closing_bet_notification(
     channel: str,
     destination: str,
@@ -1170,14 +1302,20 @@ def send_closing_bet_notification(
     *,
     account_id: str | None = None,
     notification_id: int | None = None,
+    toss_user_key: str | None = None,
 ) -> None:
     if channel == "email":
         send_email_notification(destination, subject, message)
         return
     if channel == "toss_inapp":
-        if not account_id:
-            raise HTTPException(status_code=400, detail="토스 인앱 알림에는 account_id가 필요합니다.")
-        create_toss_inapp_alert_event(account_id, destination, subject, message, payload, notification_id)
+        if not account_id or not toss_user_key:
+            raise HTTPException(status_code=400, detail="토스 스마트 발송에는 account_id와 toss_user_key가 필요합니다.")
+        send_toss_smart_message(
+            account_id=account_id,
+            toss_user_key=toss_user_key,
+            evaluation=payload,
+            notification_id=notification_id,
+        )
         return
     raise HTTPException(status_code=400, detail="지원하지 않는 알림 채널입니다.")
 
@@ -1265,6 +1403,7 @@ def upsert_closing_bet_notification(request: ClosingBetNotificationRequest) -> d
         "destination": request.destination,
         "threshold_score": request.threshold_score,
         "active": request.active,
+        "toss_user_key": request.toss_user_key,
         "company_name": evaluation.get("company_name"),
         "resolved_ticker": evaluation.get("resolved_ticker"),
         "last_score": evaluation.get("total_score"),
@@ -1298,6 +1437,18 @@ def delete_closing_bet_notification(account_id: str, notification_id: int) -> di
 
 
 def test_closing_bet_notification(request: ClosingBetNotificationTestRequest) -> dict[str, Any]:
+    evaluation = evaluate_closing_bet(request.ticker, request.market, "auto")
+    if request.channel == "toss_inapp":
+        if not request.account_id or not request.toss_user_key or not request.deployment_id:
+            raise HTTPException(status_code=400, detail="토스 테스트 발송에는 account_id, toss_user_key, deployment_id가 필요합니다.")
+        result = send_toss_smart_test_message(
+            account_id=request.account_id,
+            toss_user_key=request.toss_user_key,
+            deployment_id=request.deployment_id,
+            evaluation=evaluation,
+        )
+        return {"sent": True, "channel": request.channel, "destination": request.destination, "result": result}
+
     subject = f"[한눈투자] {request.market.upper()} 종가베팅 테스트"
     message = (
         f"테스트 알림입니다.\n"
@@ -1306,21 +1457,14 @@ def test_closing_bet_notification(request: ClosingBetNotificationTestRequest) ->
         f"- 시장: {request.market}\n"
         f"- 발송 시각: {datetime.utcnow().isoformat()}Z"
     )
-    send_closing_bet_notification(
-        request.channel,
-        request.destination,
-        subject,
-        message,
-        {"type": "closing_bet_test", "ticker": request.ticker, "market": request.market},
-        account_id=request.account_id,
-    )
+    send_email_notification(request.destination, subject, message)
     return {"sent": True, "channel": request.channel, "destination": request.destination}
 
 
 def dispatch_closing_bet_notifications(market: str | None = None, limit: int = 100) -> dict[str, Any]:
     filters = {
         "active": "eq.true",
-        "select": "id,account_id,ticker,market,krx_exchange,channel,destination,threshold_score,last_signal_date,last_notified_at",
+        "select": "id,account_id,ticker,market,krx_exchange,channel,destination,threshold_score,last_signal_date,last_notified_at,toss_user_key",
         "order": "updated_at.asc",
         "limit": limit,
     }
@@ -1357,6 +1501,7 @@ def dispatch_closing_bet_notifications(market: str | None = None, limit: int = 1
                     evaluation,
                     account_id=item["account_id"],
                     notification_id=item["id"],
+                    toss_user_key=item.get("toss_user_key"),
                 )
                 dispatched.append({"id": item["id"], "score": score, "signal_date": signal_date})
                 item["last_notified_at"] = datetime.utcnow().isoformat()

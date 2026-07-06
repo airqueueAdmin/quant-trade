@@ -206,6 +206,7 @@ export type ClosingBetNotificationUpsertRequest = {
   krx_exchange: KrxExchange
   channel: ClosingBetNotificationChannel
   destination: string
+  toss_user_key?: string
   threshold_score: number
   active: boolean
 }

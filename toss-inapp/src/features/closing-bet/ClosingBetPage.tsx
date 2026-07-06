@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { env, getAnonymousKey, requestNotificationAgreement } from '@apps-in-toss/web-bridge'
 
 import { apiClient } from '../../shared/api/client'
 import { ApiError } from '../../shared/api/http'
@@ -506,6 +507,8 @@ export function ClosingBetPage() {
   const [notificationChannel, setNotificationChannel] = useState<ClosingBetNotificationChannel>('toss_inapp')
   const [notificationDestination, setNotificationDestination] = useState('')
   const [notificationThreshold, setNotificationThreshold] = useState('70')
+  const [tossUserKey, setTossUserKey] = useState<string | null>(null)
+  const [notificationAgreementReady, setNotificationAgreementReady] = useState(false)
   const [savingNotification, setSavingNotification] = useState(false)
   const [testingNotification, setTestingNotification] = useState(false)
   const [deletingNotificationId, setDeletingNotificationId] = useState<number | null>(null)
@@ -545,6 +548,46 @@ export function ClosingBetPage() {
     ])
     setNotifications(notificationResponse.items)
     setAlerts(alertResponse.items)
+  }
+
+  async function ensureTossUserKey() {
+    if (tossUserKey) {
+      return tossUserKey
+    }
+
+    const result = await getAnonymousKey()
+    if (!result || result === 'ERROR' || result.type !== 'HASH') {
+      throw new Error('토스 사용자 키를 가져오지 못했습니다.')
+    }
+
+    setTossUserKey(result.hash)
+    return result.hash
+  }
+
+  async function ensureNotificationAgreement() {
+    if (notificationChannel !== 'toss_inapp') {
+      return
+    }
+    if (notificationAgreementReady) {
+      return
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      requestNotificationAgreement({
+        options: { templateCode: 'glance-invest-reminder' },
+        onEvent: (result) => {
+          if (result.type === 'agreementRejected') {
+            reject(new Error('사용자가 알림 동의를 거부했습니다.'))
+            return
+          }
+          setNotificationAgreementReady(true)
+          resolve()
+        },
+        onError: (error) => {
+          reject(error instanceof Error ? error : new Error('알림 동의 요청에 실패했습니다.'))
+        },
+      })
+    })
   }
 
   useEffect(() => {
@@ -755,12 +798,18 @@ export function ClosingBetPage() {
     setNotificationMessage(null)
 
     try {
+      let nextTossUserKey: string | undefined
+      if (notificationChannel === 'toss_inapp') {
+        await ensureNotificationAgreement()
+        nextTossUserKey = await ensureTossUserKey()
+      }
       const response = await apiClient.closingBetNotificationUpsert(session.sessionToken, {
         ticker: quote?.resolved_ticker || normalizedTicker,
         market,
         krx_exchange: market === 'krx' ? krxExchange : 'auto',
         channel: notificationChannel,
         destination: normalizedDestination,
+        toss_user_key: nextTossUserKey,
         threshold_score: Math.round(threshold),
         active: true,
       })
@@ -790,9 +839,18 @@ export function ClosingBetPage() {
     setNotificationError(null)
     setNotificationMessage(null)
     try {
+      let nextTossUserKey: string | undefined
+      let deploymentId: string | undefined
+      if (notificationChannel === 'toss_inapp') {
+        await ensureNotificationAgreement()
+        nextTossUserKey = await ensureTossUserKey()
+        deploymentId = env.getDeploymentId()
+      }
       await apiClient.closingBetNotificationTest({
         channel: notificationChannel,
         destination: normalizedDestination,
+        toss_user_key: nextTossUserKey,
+        deployment_id: deploymentId,
         ticker: normalizedTicker,
         market,
       }, session?.sessionToken)

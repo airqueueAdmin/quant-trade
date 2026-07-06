@@ -189,6 +189,8 @@ export const apiClient = {
   closingBetNotificationTest(payload: {
     channel: 'email' | 'toss_inapp'
     destination: string
+    toss_user_key?: string
+    deployment_id?: string
     ticker: string
     market: Market
   }, sessionToken?: string) {
