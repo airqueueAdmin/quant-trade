@@ -1,8 +1,11 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
 import { apiClient } from '../../shared/api/client'
 import { ApiError } from '../../shared/api/http'
 import type {
+  ClosingBetAlertEvent,
+  ClosingBetNotification,
+  ClosingBetNotificationChannel,
   KrxExchange,
   KRXSearchResult,
   Market,
@@ -12,6 +15,7 @@ import type {
   StockHistoryRow,
   SentimentResult,
 } from '../../shared/api/types'
+import { clearStoredSession, readStoredSession, writeStoredSession, type AppSession } from '../../shared/session/appSession'
 
 type MarketOption = Extract<Market, 'krx' | 'us'>
 
@@ -85,6 +89,10 @@ function formatDate(value?: string) {
     return '-'
   }
   return value.split('T', 1)[0]
+}
+
+function channelLabel(channel: ClosingBetNotificationChannel) {
+  return channel === 'email' ? '이메일' : '토스 앱 알림'
 }
 
 function defaultTicker(market: MarketOption) {
@@ -465,6 +473,7 @@ function recentStockWindow() {
 }
 
 export function ClosingBetPage() {
+  const [session, setSession] = useState<AppSession | null>(() => readStoredSession())
   const [market, setMarket] = useState<MarketOption>('krx')
   const [ticker, setTicker] = useState(defaultTicker('krx'))
   const [krxExchange, setKrxExchange] = useState<KrxExchange>('auto')
@@ -489,6 +498,17 @@ export function ClosingBetPage() {
     tomorrowCatalyst: 48,
     riskControl: 50,
   })
+  const [notifications, setNotifications] = useState<ClosingBetNotification[]>([])
+  const [alerts, setAlerts] = useState<ClosingBetAlertEvent[]>([])
+  const [notificationLoading, setNotificationLoading] = useState(false)
+  const [notificationError, setNotificationError] = useState<string | null>(null)
+  const [notificationMessage, setNotificationMessage] = useState<string | null>(null)
+  const [notificationChannel, setNotificationChannel] = useState<ClosingBetNotificationChannel>('toss_inapp')
+  const [notificationDestination, setNotificationDestination] = useState('')
+  const [notificationThreshold, setNotificationThreshold] = useState('70')
+  const [savingNotification, setSavingNotification] = useState(false)
+  const [testingNotification, setTestingNotification] = useState(false)
+  const [deletingNotificationId, setDeletingNotificationId] = useState<number | null>(null)
 
   const totalScore = useMemo(
     () =>
@@ -517,6 +537,86 @@ export function ClosingBetPage() {
     () => searchLocalKrxCompanies(searchQuery, commonKrxCompanies),
     [commonKrxCompanies, searchQuery],
   )
+
+  async function refreshNotificationCenter(sessionValue: AppSession, signal?: AbortSignal) {
+    const [notificationResponse, alertResponse] = await Promise.all([
+      apiClient.closingBetNotifications(sessionValue.sessionToken, signal),
+      apiClient.closingBetAlerts(sessionValue.sessionToken, signal),
+    ])
+    setNotifications(notificationResponse.items)
+    setAlerts(alertResponse.items)
+  }
+
+  useEffect(() => {
+    const abortController = new AbortController()
+
+    async function ensureSession() {
+      if (session) {
+        return
+      }
+
+      try {
+        const response = await apiClient.bootstrapSession()
+        if (abortController.signal.aborted) {
+          return
+        }
+        const nextSession = {
+          accountId: response.account_id,
+          sessionToken: response.session_token,
+        }
+        writeStoredSession(nextSession)
+        setSession(nextSession)
+      } catch (caughtError) {
+        if (abortController.signal.aborted) {
+          return
+        }
+        setNotificationError(friendlyApiError(caughtError, '알림 세션을 준비하지 못했습니다.'))
+      }
+    }
+
+    void ensureSession()
+    return () => abortController.abort()
+  }, [session])
+
+  useEffect(() => {
+    const abortController = new AbortController()
+
+    async function loadNotifications() {
+      if (!session) {
+        setNotifications([])
+        return
+      }
+      setNotificationLoading(true)
+      setNotificationError(null)
+
+      try {
+        await refreshNotificationCenter(session, abortController.signal)
+        if (abortController.signal.aborted) {
+          return
+        }
+      } catch (caughtError) {
+        if (abortController.signal.aborted) {
+          return
+        }
+        if (caughtError instanceof ApiError && caughtError.status === 401) {
+          clearStoredSession()
+          setSession(null)
+          setNotifications([])
+          setAlerts([])
+          setNotificationError('알림 세션이 만료되어 다시 연결 중입니다.')
+          return
+        }
+        setNotificationError(friendlyApiError(caughtError, '알림 구독 목록을 불러오지 못했습니다.'))
+      } finally {
+        if (!abortController.signal.aborted) {
+          setNotificationLoading(false)
+        }
+      }
+    }
+
+    void loadNotifications()
+    return () => abortController.abort()
+  }, [session])
 
   async function handleSearch() {
     const normalizedQuery = searchQuery.trim()
@@ -624,6 +724,120 @@ export function ClosingBetPage() {
       setStockRows([])
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function handleSaveNotification() {
+    if (!session) {
+      setNotificationError('알림 세션을 준비 중입니다. 잠시 후 다시 시도하세요.')
+      return
+    }
+
+    const normalizedTicker = normalizeTicker(ticker, market)
+    const normalizedDestination = notificationDestination.trim()
+    const threshold = Number(notificationThreshold)
+
+    if (!quote && !normalizedTicker) {
+      setNotificationError('먼저 종가베팅 분석을 실행한 뒤 알림을 저장하세요.')
+      return
+    }
+    if (!normalizedDestination) {
+      setNotificationError(notificationChannel === 'email' ? '이메일 주소를 입력하세요.' : '토스 앱 알림 메모를 입력하세요.')
+      return
+    }
+    if (!Number.isFinite(threshold) || threshold < 0 || threshold > 100) {
+      setNotificationError('점수 기준은 0~100 사이로 입력하세요.')
+      return
+    }
+
+    setSavingNotification(true)
+    setNotificationError(null)
+    setNotificationMessage(null)
+
+    try {
+      const response = await apiClient.closingBetNotificationUpsert(session.sessionToken, {
+        ticker: quote?.resolved_ticker || normalizedTicker,
+        market,
+        krx_exchange: market === 'krx' ? krxExchange : 'auto',
+        channel: notificationChannel,
+        destination: normalizedDestination,
+        threshold_score: Math.round(threshold),
+        active: true,
+      })
+      setNotifications((current) => {
+        const others = current.filter((item) => item.id !== response.subscription.id)
+        return [response.subscription, ...others]
+      })
+      await refreshNotificationCenter(session)
+      setNotificationMessage(`${channelLabel(notificationChannel)} 알림 구독을 저장했습니다.`)
+    } catch (caughtError) {
+      setNotificationError(friendlyApiError(caughtError, '알림 구독 저장에 실패했습니다.'))
+    } finally {
+      setSavingNotification(false)
+    }
+  }
+
+  async function handleTestNotification() {
+    const normalizedDestination = notificationDestination.trim()
+    const normalizedTicker = normalizeTicker(ticker, market) || defaultTicker(market)
+
+    if (!normalizedDestination) {
+      setNotificationError(notificationChannel === 'email' ? '이메일 주소를 입력하세요.' : '토스 앱 알림 메모를 입력하세요.')
+      return
+    }
+
+    setTestingNotification(true)
+    setNotificationError(null)
+    setNotificationMessage(null)
+    try {
+      await apiClient.closingBetNotificationTest({
+        channel: notificationChannel,
+        destination: normalizedDestination,
+        ticker: normalizedTicker,
+        market,
+      }, session?.sessionToken)
+      if (session) {
+        await refreshNotificationCenter(session)
+      }
+      setNotificationMessage(`${channelLabel(notificationChannel)} 테스트 알림을 발송했습니다.`)
+    } catch (caughtError) {
+      setNotificationError(friendlyApiError(caughtError, '테스트 알림 발송에 실패했습니다.'))
+    } finally {
+      setTestingNotification(false)
+    }
+  }
+
+  async function handleDeleteNotification(notificationId: number) {
+    if (!session) {
+      setNotificationError('알림 세션을 준비 중입니다. 잠시 후 다시 시도하세요.')
+      return
+    }
+
+    setDeletingNotificationId(notificationId)
+    setNotificationError(null)
+    setNotificationMessage(null)
+    try {
+      await apiClient.closingBetNotificationDelete(session.sessionToken, notificationId)
+      await refreshNotificationCenter(session)
+      setNotificationMessage('알림 구독을 삭제했습니다.')
+    } catch (caughtError) {
+      setNotificationError(friendlyApiError(caughtError, '알림 구독 삭제에 실패했습니다.'))
+    } finally {
+      setDeletingNotificationId(null)
+    }
+  }
+
+  async function handleReadAlert(alertId: number) {
+    if (!session) {
+      setNotificationError('알림 세션을 준비 중입니다. 잠시 후 다시 시도하세요.')
+      return
+    }
+
+    try {
+      const response = await apiClient.closingBetAlertMarkRead(session.sessionToken, alertId)
+      setAlerts((current) => current.map((item) => (item.id === alertId ? response.item : item)))
+    } catch (caughtError) {
+      setNotificationError(friendlyApiError(caughtError, '알림 읽음 처리에 실패했습니다.'))
     }
   }
 
@@ -845,6 +1059,160 @@ export function ClosingBetPage() {
             ) : null}
           </div>
         ) : null}
+
+        <div className="content-panel content-panel--nested">
+          <p className="content-panel__eyebrow">알림 설정</p>
+          <p className="content-panel__description">
+            카카오 대신 Toss in-app 안에서 확인하는 알림함 기준으로 설계했습니다. 이메일도 함께 둘 수 있습니다.
+          </p>
+
+          <div className="field-grid field-grid--single-when-narrow">
+            <div>
+              <label className="field-label" htmlFor="closing-bet-notification-channel">
+                알림 채널
+              </label>
+              <select
+                id="closing-bet-notification-channel"
+                className="text-field"
+                value={notificationChannel}
+                onChange={(event) => setNotificationChannel(event.target.value as ClosingBetNotificationChannel)}
+              >
+                <option value="toss_inapp">토스 앱 알림</option>
+                <option value="email">이메일</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="field-label" htmlFor="closing-bet-notification-destination">
+                {notificationChannel === 'email' ? '수신 이메일' : '알림 메모'}
+              </label>
+              <input
+                id="closing-bet-notification-destination"
+                className="text-field"
+                value={notificationDestination}
+                onChange={(event) => setNotificationDestination(event.target.value)}
+                placeholder={
+                  notificationChannel === 'email'
+                    ? 'me@example.com'
+                    : '예: 종가 후보 즉시 확인'
+                }
+              />
+            </div>
+          </div>
+
+          <div className="field-grid field-grid--single-when-narrow">
+            <div>
+              <label className="field-label" htmlFor="closing-bet-notification-threshold">
+                알림 점수 기준
+              </label>
+              <input
+                id="closing-bet-notification-threshold"
+                className="text-field"
+                inputMode="numeric"
+                value={notificationThreshold}
+                onChange={(event) => setNotificationThreshold(event.target.value)}
+                placeholder="70"
+              />
+            </div>
+            <div className="input-action-row input-action-row--stacked">
+              <button
+                type="button"
+                className="secondary-action"
+                onClick={() => void handleTestNotification()}
+                disabled={testingNotification}
+              >
+                {testingNotification
+                  ? '테스트 발송 중...'
+                  : notificationChannel === 'toss_inapp'
+                    ? '토스 앱 알림 도착 테스트'
+                    : '이메일 테스트'}
+              </button>
+              <button
+                type="button"
+                className="primary-action"
+                onClick={() => void handleSaveNotification()}
+                disabled={savingNotification}
+              >
+                {savingNotification ? '저장 중...' : '현재 종목으로 알림 저장'}
+              </button>
+            </div>
+          </div>
+
+          {notificationMessage ? <div className="state-box">{notificationMessage}</div> : null}
+          {notificationError ? <div className="state-box state-box--error">{notificationError}</div> : null}
+          {notificationLoading ? <div className="state-box">알림 구독과 알림함을 불러오는 중입니다...</div> : null}
+
+          <div className="section-block">
+            <div className="section-block__header">
+              <h3>내 알림 구독</h3>
+            </div>
+            <div className="sector-list">
+              {notifications.length === 0 ? (
+                <div className="state-box">저장된 알림 구독이 없습니다.</div>
+              ) : (
+                notifications.map((item) => (
+                  <article key={item.id} className="sector-list__item">
+                    <div className="sector-list__top">
+                      <div>
+                        <h4 className="sector-list__title">
+                          {item.company_name || item.resolved_ticker || item.ticker}
+                        </h4>
+                        <p className="sector-list__subtitle">
+                          {channelLabel(item.channel)} / 기준 {item.threshold_score}점 / 최근 {item.last_score ?? '-'}점
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        className="secondary-action"
+                        onClick={() => void handleDeleteNotification(item.id)}
+                        disabled={deletingNotificationId === item.id}
+                      >
+                        {deletingNotificationId === item.id ? '삭제 중...' : '삭제'}
+                      </button>
+                    </div>
+                    <p className="sector-list__meta">
+                      {item.destination} / 최근 시그널 {formatDate(item.last_signal_date ?? undefined)}
+                    </p>
+                  </article>
+                ))
+              )}
+            </div>
+          </div>
+
+          <div className="section-block">
+            <div className="section-block__header">
+              <h3>토스 앱 알림함</h3>
+            </div>
+            <div className="sector-list">
+              {alerts.length === 0 ? (
+                <div className="state-box">아직 도착한 알림이 없습니다.</div>
+              ) : (
+                alerts.map((item) => (
+                  <article key={item.id} className="sector-list__item">
+                    <div className="sector-list__top">
+                      <div>
+                        <h4 className="sector-list__title">{item.title}</h4>
+                        <p className="sector-list__subtitle">
+                          {item.total_score ?? '-'}점 / {formatDate(item.signal_date ?? undefined)} / {item.is_read ? '읽음' : '안읽음'}
+                        </p>
+                      </div>
+                      {!item.is_read ? (
+                        <button
+                          type="button"
+                          className="secondary-action"
+                          onClick={() => void handleReadAlert(item.id)}
+                        >
+                          읽음 처리
+                        </button>
+                      ) : null}
+                    </div>
+                    <p className="sector-list__meta">{item.message}</p>
+                  </article>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
       </section>
 
       <section className="content-panel">

@@ -13,7 +13,7 @@ export class ApiError extends Error {
 }
 
 type RequestOptions = {
-  method?: 'GET' | 'POST'
+  method?: 'GET' | 'POST' | 'DELETE'
   params?: Record<string, string | number | boolean | undefined | null>
   body?: unknown
   signal?: AbortSignal

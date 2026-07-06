@@ -1,13 +1,16 @@
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 import base64
 import hashlib
 import hmac
 import os
 import secrets
+import smtplib
 from typing import Any, Iterable
 import json
+from zoneinfo import ZoneInfo
+from email.message import EmailMessage
 
 import numpy as np
 import pandas as pd
@@ -51,6 +54,33 @@ SUPABASE_DB_SCHEMA = os.getenv("SUPABASE_DB_SCHEMA", "public")
 CORS_ALLOW_ORIGINS = os.getenv("CORS_ALLOW_ORIGINS", "").strip()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or ""
 APP_SESSION_SECRET = os.getenv("APP_SESSION_SECRET") or secrets.token_hex(32)
+SMTP_HOST = (os.getenv("SMTP_HOST") or "").strip()
+SMTP_PORT = int(os.getenv("SMTP_PORT") or "587")
+SMTP_USERNAME = (os.getenv("SMTP_USERNAME") or "").strip()
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD") or ""
+SMTP_FROM_EMAIL = (os.getenv("SMTP_FROM_EMAIL") or SMTP_USERNAME or "").strip()
+SMTP_USE_TLS = (os.getenv("SMTP_USE_TLS") or "true").strip().lower() not in {"0", "false", "no"}
+NOTIFICATION_DISPATCH_TOKEN = (os.getenv("NOTIFICATION_DISPATCH_TOKEN") or "").strip()
+MARKET_TIMEZONES = {
+    "krx": ZoneInfo("Asia/Seoul"),
+    "us": ZoneInfo("America/New_York"),
+}
+MARKET_CLOSE_TIMES = {
+    "krx": time(hour=15, minute=30),
+    "us": time(hour=16, minute=0),
+}
+CLOSING_BET_QUICK_SCENARIOS = [
+    "섹터가 하루 종일 강했고 종가까지 눌림이 적음",
+    "장중 눌림 뒤 거래대금이 다시 붙으며 종가 회복",
+    "뉴스 한 번으로 급등했지만 종가까지 매도 물량이 계속 나옴",
+    "고가 돌파는 했지만 종가가 중간 이하에서 끝남",
+]
+CLOSING_BET_SCENARIO_MODIFIERS = {
+    CLOSING_BET_QUICK_SCENARIOS[0]: 4,
+    CLOSING_BET_QUICK_SCENARIOS[1]: 2,
+    CLOSING_BET_QUICK_SCENARIOS[2]: -4,
+    CLOSING_BET_QUICK_SCENARIOS[3]: -6,
+}
 
 
 def parse_allowed_origins(raw_value: str) -> list[str]:
@@ -293,6 +323,113 @@ class PaperTradingOrderRequest(PaperTradingAccountRequest):
         if normalized not in {"buy", "sell"}:
             raise ValueError("side must be 'buy' or 'sell'")
         return normalized
+
+
+class ClosingBetEvaluationRequest(BaseModel):
+    ticker: str = Field(min_length=1, max_length=32)
+    market: str = Field(default="krx")
+    krx_exchange: str = Field(default="auto")
+
+    @field_validator("ticker")
+    @classmethod
+    def normalize_ticker(cls, value: str) -> str:
+        return normalize_ticker_input(value)
+
+    @field_validator("market")
+    @classmethod
+    def validate_market(cls, value: str) -> str:
+        return normalize_market(value)
+
+    @field_validator("krx_exchange")
+    @classmethod
+    def validate_krx_exchange(cls, value: str) -> str:
+        return normalize_krx_exchange(value)
+
+
+class ClosingBetNotificationRequest(PaperTradingAccountRequest):
+    ticker: str = Field(min_length=1, max_length=32)
+    market: str = Field(default="krx")
+    krx_exchange: str = Field(default="auto")
+    channel: str = Field(min_length=4, max_length=16)
+    destination: str = Field(min_length=3, max_length=200)
+    threshold_score: int = Field(default=70, ge=0, le=100)
+    active: bool = Field(default=True)
+
+    @field_validator("ticker")
+    @classmethod
+    def normalize_notification_ticker(cls, value: str) -> str:
+        return normalize_ticker_input(value)
+
+    @field_validator("market")
+    @classmethod
+    def validate_notification_market(cls, value: str) -> str:
+        return normalize_market(value)
+
+    @field_validator("krx_exchange")
+    @classmethod
+    def validate_notification_krx_exchange(cls, value: str) -> str:
+        return normalize_krx_exchange(value)
+
+    @field_validator("channel")
+    @classmethod
+    def validate_notification_channel(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in {"email", "toss_inapp"}:
+            raise ValueError("channel must be 'email' or 'toss_inapp'")
+        return normalized
+
+    @field_validator("destination")
+    @classmethod
+    def validate_destination(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("destination is required")
+        return normalized
+
+
+class ClosingBetNotificationDispatchRequest(BaseModel):
+    market: str | None = Field(default=None)
+    limit: int = Field(default=100, ge=1, le=500)
+
+    @field_validator("market")
+    @classmethod
+    def validate_optional_market(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        return normalize_market(value)
+
+
+class ClosingBetNotificationTestRequest(PaperTradingAccountRequest):
+    channel: str = Field(min_length=4, max_length=16)
+    destination: str = Field(min_length=3, max_length=200)
+    ticker: str = Field(default="005930", min_length=1, max_length=32)
+    market: str = Field(default="krx")
+
+    @field_validator("channel")
+    @classmethod
+    def validate_test_channel(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in {"email", "toss_inapp"}:
+            raise ValueError("channel must be 'email' or 'toss_inapp'")
+        return normalized
+
+    @field_validator("destination")
+    @classmethod
+    def validate_test_destination(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("destination is required")
+        return normalized
+
+    @field_validator("ticker")
+    @classmethod
+    def normalize_test_ticker(cls, value: str) -> str:
+        return normalize_ticker_input(value)
+
+    @field_validator("market")
+    @classmethod
+    def validate_test_market(cls, value: str) -> str:
+        return normalize_market(value)
 
 
 def normalize_paper_account_id(value: str) -> str:
@@ -596,6 +733,634 @@ def reset_paper_trading_account(account_id: str) -> dict[str, Any]:
     return normalize_value({"account_id": account_id, "result": result})
 
 
+def create_sentiment_snapshot(ticker: str, market: str = "us", krx_exchange: str = "auto") -> dict[str, Any]:
+    normalized_ticker = normalize_ticker_input(ticker)
+    normalized_market, normalized_exchange = validate_market_params(market, krx_exchange)
+    profile = get_symbol_profile(normalized_ticker, market=normalized_market, krx_exchange=normalized_exchange)
+    articles, attempted_queries = gemini_analyzer.get_news_candidates(
+        company_name=profile.get("name"),
+        ticker=profile.get("resolved_ticker", normalized_ticker),
+        market=profile.get("market", normalized_market),
+    )
+    if not articles:
+        if not gemini_analyzer.NEWS_API_KEY:
+            summary = "백엔드에 NEWS_API_KEY가 설정되지 않았습니다."
+        else:
+            summary = "국내 종목 뉴스 검색 결과가 없습니다. 회사명과 종목코드로 여러 번 재시도했지만 최신 뉴스를 찾지 못했습니다."
+        return normalize_value(
+            {
+                "ticker": normalized_ticker,
+                "resolved_ticker": profile.get("resolved_ticker", normalized_ticker),
+                "market": profile.get("market", normalized_market),
+                "krx_exchange": profile.get("krx_exchange", normalized_exchange),
+                "company_name": profile.get("name"),
+                "sentiment_score": 50,
+                "summary": summary,
+                "articles": [],
+                "attempted_queries": attempted_queries,
+                "news_api_enabled": bool(gemini_analyzer.NEWS_API_KEY),
+            }
+        )
+
+    try:
+        result_json = gemini_analyzer.analyze_sentiment_with_gemini(json.dumps(articles, ensure_ascii=False))
+        result = json.loads(result_json)
+    except Exception as exc:
+        result = {
+            "sentiment_score": 50,
+            "summary": f"AI 분석을 완료하지 못해 중립 점수로 대체했습니다. 사유: {exc}",
+            "articles": articles,
+        }
+
+    result["ticker"] = normalized_ticker
+    result["resolved_ticker"] = profile.get("resolved_ticker", normalized_ticker)
+    result["market"] = profile.get("market", normalized_market)
+    result["krx_exchange"] = profile.get("krx_exchange", normalized_exchange)
+    result["company_name"] = profile.get("name")
+    result["articles"] = result.get("articles", articles)
+    result["attempted_queries"] = attempted_queries
+    result["news_api_enabled"] = bool(gemini_analyzer.NEWS_API_KEY)
+    return normalize_value(result)
+
+
+def closing_bet_recent_stock_window(market: str) -> tuple[str, str]:
+    cutoff_date = resolve_sector_snapshot_cutoff_date(market)
+    end_date = cutoff_date + timedelta(days=1)
+    start_date = end_date - timedelta(days=90)
+    return start_date.isoformat(), end_date.isoformat()
+
+
+def clamp_metric(value: float, minimum: int = 0, maximum: int = 100) -> int:
+    return max(minimum, min(maximum, round(value)))
+
+
+def derive_close_strength_from_rows(rows: list[dict[str, Any]]) -> int:
+    if len(rows) < 2:
+        return 55
+    latest = rows[-1]
+    previous = rows[-2]
+    latest_close = float(latest.get("Close") or 0)
+    latest_open = float(latest.get("Open") or latest_close)
+    latest_high = float(latest.get("High") or latest_close)
+    latest_low = float(latest.get("Low") or latest_close)
+    previous_close = float(previous.get("Close") or latest_close)
+    day_range = max(latest_high - latest_low, 0.000001)
+    close_position = ((latest_close - latest_low) / day_range) * 100
+    body_strength = ((latest_close / max(latest_open, 0.000001)) - 1) * 100
+    change_pct = ((latest_close / max(previous_close, 0.000001)) - 1) * 100
+    return clamp_metric(20 + close_position * 0.55 + body_strength * 4 + change_pct * 3)
+
+
+def derive_volume_persistence(match: dict[str, Any] | None, quote: dict[str, Any] | None, rows: list[dict[str, Any]]) -> int:
+    if not match and not quote and not rows:
+        return 52
+
+    volume_score = 0.0
+    if len(rows) >= 21:
+        latest_volume = float(rows[-1].get("Volume") or 0)
+        previous_volumes = [float(row.get("Volume") or 0) for row in rows[-21:-1]]
+        avg_volume = sum(previous_volumes) / max(len(previous_volumes), 1)
+        if avg_volume > 0:
+            volume_ratio = latest_volume / avg_volume
+            volume_score = min(30.0, volume_ratio * 12)
+
+    return clamp_metric(
+        50
+        + float((quote or {}).get("change_pct") or 0) * 2.5
+        + float((match or {}).get("trend_score") or 0) * 1.8
+        + float((match or {}).get("return_1d_pct") or 0) * 2
+        + volume_score
+    )
+
+
+def derive_news_follow_through(sentiment: dict[str, Any] | None) -> int:
+    if not sentiment:
+        return 50
+    return clamp_metric(float(sentiment.get("sentiment_score") or 50))
+
+
+def derive_tomorrow_catalyst(sentiment: dict[str, Any] | None) -> int:
+    if not sentiment:
+        return 48
+    article_boost = min(12, len(sentiment.get("articles") or []) * 3)
+    api_boost = 6 if sentiment.get("news_api_enabled") else 0
+    return clamp_metric(float(sentiment.get("sentiment_score") or 50) * 0.65 + article_boost + api_boost)
+
+
+def derive_risk_control(
+    quote: dict[str, Any] | None,
+    match: dict[str, Any] | None,
+    sentiment: dict[str, Any] | None,
+    rows: list[dict[str, Any]],
+) -> int:
+    if not quote and not match and not sentiment and not rows:
+        return 50
+
+    close_location_bonus = 0.0
+    pullback_penalty = 0.0
+    if len(rows) >= 20:
+        recent_rows = rows[-20:]
+        closes = [float(row.get("Close") or 0) for row in recent_rows]
+        highs = [float(row.get("High") or 0) for row in recent_rows]
+        latest_close = closes[-1]
+        twenty_day_high = max(highs) if highs else latest_close
+        if twenty_day_high > 0:
+            close_location_bonus = (latest_close / twenty_day_high) * 18
+
+        latest = recent_rows[-1]
+        latest_high = float(latest.get("High") or latest_close)
+        latest_low = float(latest.get("Low") or latest_close)
+        latest_open = float(latest.get("Open") or latest_close)
+        candle_range_pct = ((latest_high - latest_low) / max(latest_close, 0.000001)) * 100
+        if latest_close < latest_open:
+            pullback_penalty += 8
+        pullback_penalty += min(12.0, candle_range_pct * 1.5)
+
+    return clamp_metric(
+        48
+        + float((quote or {}).get("change_pct") or 0) * 1.5
+        + float((match or {}).get("trend_score") or 0) * 1.1
+        + (float((sentiment or {}).get("sentiment_score") or 50) - 50) * 0.3
+        + close_location_bonus
+        - pullback_penalty
+    )
+
+
+def derive_market_close_scenario(rows: list[dict[str, Any]], sentiment: dict[str, Any] | None) -> str:
+    if len(rows) < 2:
+        return CLOSING_BET_QUICK_SCENARIOS[1]
+
+    latest = rows[-1]
+    previous = rows[-2]
+    latest_open = float(latest.get("Open") or 0)
+    latest_high = float(latest.get("High") or 0)
+    latest_low = float(latest.get("Low") or 0)
+    latest_close = float(latest.get("Close") or 0)
+    previous_close = float(previous.get("Close") or latest_close)
+    latest_volume = float(latest.get("Volume") or 0)
+    day_range = max(latest_high - latest_low, 0.000001)
+    close_position = (latest_close - latest_low) / day_range
+    body_return_pct = ((latest_close / max(latest_open, 0.000001)) - 1) * 100
+    day_return_pct = ((latest_close / max(previous_close, 0.000001)) - 1) * 100
+    previous_volumes = [float(row.get("Volume") or 0) for row in rows[-21:-1]] if len(rows) >= 21 else []
+    avg_volume = sum(previous_volumes) / max(len(previous_volumes), 1)
+    volume_ratio = latest_volume / avg_volume if avg_volume > 0 else 1
+    sentiment_score = float((sentiment or {}).get("sentiment_score") or 50)
+
+    if close_position >= 0.8 and body_return_pct >= 0 and day_return_pct >= 1:
+        return CLOSING_BET_QUICK_SCENARIOS[0]
+    if close_position >= 0.58 and body_return_pct >= -0.5 and volume_ratio >= 1.1:
+        return CLOSING_BET_QUICK_SCENARIOS[1]
+    if day_return_pct >= 2 and close_position < 0.45 and sentiment_score >= 55:
+        return CLOSING_BET_QUICK_SCENARIOS[2]
+    return CLOSING_BET_QUICK_SCENARIOS[3]
+
+
+def derive_risk_flags(
+    rows: list[dict[str, Any]],
+    match: dict[str, Any] | None,
+    sentiment: dict[str, Any] | None,
+    scenario: str,
+    scores: dict[str, int],
+) -> list[str]:
+    flags: list[str] = []
+    if scenario == CLOSING_BET_QUICK_SCENARIOS[2]:
+        flags.append("뉴스 영향으로 급등했지만 종가까지 매도 물량이 남아 있을 가능성이 있습니다.")
+    if scenario == CLOSING_BET_QUICK_SCENARIOS[3]:
+        flags.append("고가 대비 종가 위치가 낮아 장 마감까지 힘이 유지됐다고 보기 어렵습니다.")
+
+    if len(rows) >= 2:
+        latest = rows[-1]
+        latest_open = float(latest.get("Open") or 0)
+        latest_high = float(latest.get("High") or 0)
+        latest_low = float(latest.get("Low") or 0)
+        latest_close = float(latest.get("Close") or 0)
+        latest_volume = float(latest.get("Volume") or 0)
+        day_range = max(latest_high - latest_low, 0.000001)
+        close_position = (latest_close - latest_low) / day_range
+        upper_wick_ratio = (latest_high - max(latest_open, latest_close)) / day_range
+        if close_position < 0.45 or upper_wick_ratio > 0.45:
+            flags.append("윗꼬리 또는 종가 밀림이 커서 종가베팅 관점에서는 방어력이 약해 보입니다.")
+        if len(rows) >= 21:
+            previous_volumes = [float(row.get("Volume") or 0) for row in rows[-21:-1]]
+            avg_volume = sum(previous_volumes) / max(len(previous_volumes), 1)
+            if avg_volume > 0:
+                volume_ratio = latest_volume / avg_volume
+                if volume_ratio < 0.9 and scores.get("volume_persistence", 52) < 60:
+                    flags.append("거래량이 평소보다 크게 늘지 않아 수급 지속성 신호가 약합니다.")
+
+    if match and scores.get("leader_status", 45) < 55:
+        flags.append(f"{match.get('name', '해당')} 섹터 안에서는 대장주보다 후발주에 가까워 보입니다.")
+
+    if sentiment:
+        if float(sentiment.get("sentiment_score") or 50) < 45:
+            flags.append("뉴스와 시장 심리가 약해서 내일 재료가 다시 이어질 가능성이 높지 않습니다.")
+        if not sentiment.get("news_api_enabled"):
+            flags.append("최신 뉴스 수집 범위가 좁아 재료 지속성 판단 신뢰도가 낮을 수 있습니다.")
+    else:
+        flags.append("뉴스 재료 확인이 충분하지 않아 내일 연결성 판단이 제한적입니다.")
+
+    if scores.get("risk_control", 50) < 50:
+        flags.append("손절 기준을 잡기 쉬운 구조로 보기 어려워 대응 난도가 높을 수 있습니다.")
+
+    deduped = list(dict.fromkeys(flags))
+    return deduped[:5]
+
+
+def score_label(score: int) -> str:
+    if score >= 76:
+        return "내일 이어질 가능성이 상대적으로 높음"
+    if score >= 60:
+        return "관심 후보지만 장 막판 구조를 더 확인해야 함"
+    if score >= 45:
+        return "애매함, 억지 진입보다 관찰 우선"
+    return "종가베팅보다 제외가 유리한 구간"
+
+
+def score_action(score: int) -> str:
+    if score >= 76:
+        return "후보군 상단. 내일 갭상승보다 시가 이후 지지 여부까지 같이 준비합니다."
+    if score >= 60:
+        return "관심 유지 구간입니다. 주요 지표는 나쁘지 않지만 확신 구간은 아닙니다."
+    if score >= 45:
+        return "복기 후보 정도로 보는 편이 낫습니다. 억지 진입보다 관찰이 우선입니다."
+    return "오늘 살아남은 수급으로 보기 어렵습니다. 다른 후보를 우선 검토하는 편이 맞습니다."
+
+
+def evaluate_closing_bet(ticker: str, market: str = "krx", krx_exchange: str = "auto") -> dict[str, Any]:
+    normalized_ticker = normalize_ticker_input(ticker)
+    normalized_market, normalized_exchange = validate_market_params(market, krx_exchange)
+    start_date, end_date = closing_bet_recent_stock_window(normalized_market)
+    stock_data = ensure_data(normalized_ticker, start_date, end_date, market=normalized_market, krx_exchange=normalized_exchange)
+    rows = serialize_portfolio(stock_data)
+    quote = create_quote_snapshot(normalized_ticker, market=normalized_market, krx_exchange=normalized_exchange)
+    sentiment = create_sentiment_snapshot(normalized_ticker, market=normalized_market, krx_exchange=normalized_exchange)
+    sector_snapshot = create_sector_snapshot(normalized_market)
+    resolved_ticker = quote.get("resolved_ticker", normalized_ticker)
+    resolved_sector = None
+    for sector in sector_snapshot.get("sectors", []):
+        for component in sector.get("components", []):
+            if component.get("ticker", "").strip().upper() == str(resolved_ticker).strip().upper():
+                resolved_sector = sector
+                break
+        if resolved_sector:
+            break
+
+    sector_index = -1
+    if resolved_sector:
+        for index, item in enumerate(sector_snapshot.get("sectors", [])):
+            if item.get("key") == resolved_sector.get("key"):
+                sector_index = index
+                break
+    leader_boost = 14 if resolved_sector and any(item.get("key") == resolved_sector.get("key") for item in sector_snapshot.get("leaders", [])) else 0
+    laggard_penalty = 18 if resolved_sector and any(item.get("key") == resolved_sector.get("key") for item in sector_snapshot.get("laggards", [])) else 0
+    ranking_boost = max(0, 18 - sector_index * 2) if sector_index >= 0 else 0
+    sector_strength = clamp_metric(
+        52
+        + float((resolved_sector or {}).get("return_1d_pct") or 0) * 3
+        + float((resolved_sector or {}).get("return_5d_pct") or 0) * 1.2
+        + float((resolved_sector or {}).get("trend_score") or 0) * 1.5
+        + leader_boost
+        + ranking_boost
+        - laggard_penalty
+    ) if resolved_sector else 50
+
+    component_index = -1
+    if resolved_sector:
+        components = resolved_sector.get("components") or []
+        for index, item in enumerate(components):
+            if item.get("ticker", "").strip().upper() == str(resolved_ticker).strip().upper():
+                component_index = index
+                break
+    component_boost = 18 if component_index == 0 else max(4, 12 - component_index * 2) if component_index > 0 else 0
+    resolved_sector_leader_boost = 12 if resolved_sector and any(item.get("key") == resolved_sector.get("key") for item in sector_snapshot.get("leaders", [])) else 0
+    leader_status = clamp_metric(48 + component_boost + resolved_sector_leader_boost + float((resolved_sector or {}).get("trend_score") or 0) * 1.2) if resolved_sector else 45
+
+    scores = {
+        "sector_strength": sector_strength,
+        "close_strength": derive_close_strength_from_rows(rows) if rows else clamp_metric(55 + float(quote.get("change_pct") or 0) * 4),
+        "volume_persistence": derive_volume_persistence(resolved_sector, quote, rows),
+        "leader_status": leader_status,
+        "news_follow_through": derive_news_follow_through(sentiment),
+        "tomorrow_catalyst": derive_tomorrow_catalyst(sentiment),
+        "risk_control": derive_risk_control(quote, resolved_sector, sentiment, rows),
+    }
+    scenario = derive_market_close_scenario(rows, sentiment)
+    total_score = clamp_metric(
+        scores["sector_strength"] * 0.2
+        + scores["close_strength"] * 0.24
+        + scores["volume_persistence"] * 0.2
+        + scores["leader_status"] * 0.16
+        + scores["news_follow_through"] * 0.1
+        + scores["tomorrow_catalyst"] * 0.05
+        + scores["risk_control"] * 0.05
+        + CLOSING_BET_SCENARIO_MODIFIERS[scenario]
+    )
+    signal_date = str((rows[-1].get("Date") or quote.get("as_of") or "")).split("T", 1)[0]
+    risk_flags = derive_risk_flags(rows, resolved_sector, sentiment, scenario, scores)
+
+    return normalize_value(
+        {
+            "ticker": normalized_ticker,
+            "resolved_ticker": resolved_ticker,
+            "market": normalized_market,
+            "krx_exchange": normalized_exchange,
+            "company_name": quote.get("company_name") or sentiment.get("company_name"),
+            "signal_date": signal_date,
+            "quote": quote,
+            "sentiment": sentiment,
+            "sector_snapshot": sector_snapshot,
+            "resolved_sector": resolved_sector,
+            "scores": scores,
+            "scenario": scenario,
+            "scenario_modifier": CLOSING_BET_SCENARIO_MODIFIERS[scenario],
+            "total_score": total_score,
+            "score_label": score_label(total_score),
+            "score_action": score_action(total_score),
+            "risk_flags": risk_flags,
+        }
+    )
+
+
+def is_email_configured() -> bool:
+    return bool(SMTP_HOST and SMTP_FROM_EMAIL)
+
+
+def send_email_notification(destination: str, subject: str, message: str) -> None:
+    if not is_email_configured():
+        raise HTTPException(status_code=503, detail="SMTP 설정이 없어 이메일 알림을 보낼 수 없습니다.")
+    email = EmailMessage()
+    email["From"] = SMTP_FROM_EMAIL
+    email["To"] = destination
+    email["Subject"] = subject
+    email.set_content(message)
+
+    with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20) as server:
+        if SMTP_USE_TLS:
+            server.starttls()
+        if SMTP_USERNAME:
+            server.login(SMTP_USERNAME, SMTP_PASSWORD)
+        server.send_message(email)
+
+
+def create_toss_inapp_alert_event(
+    account_id: str,
+    destination: str,
+    subject: str,
+    message: str,
+    payload: dict[str, Any],
+    notification_id: int | None = None,
+) -> dict[str, Any]:
+    rows = call_supabase(
+        "POST",
+        "/rest/v1/closing_bet_alert_events",
+        json_payload=[{
+            "account_id": account_id,
+            "notification_id": notification_id,
+            "delivered_channel": "toss_inapp",
+            "title": subject,
+            "message": f"{destination}\n{message}" if destination else message,
+            "ticker": payload.get("resolved_ticker") or payload.get("ticker") or "-",
+            "market": payload.get("market") or "krx",
+            "signal_date": payload.get("signal_date"),
+            "total_score": payload.get("total_score"),
+        }],
+        prefer="return=representation",
+    ) or []
+    if not rows:
+        raise HTTPException(status_code=503, detail="토스 인앱 알림을 저장하지 못했습니다.")
+    return normalize_value(rows[0])
+
+
+def send_closing_bet_notification(
+    channel: str,
+    destination: str,
+    subject: str,
+    message: str,
+    payload: dict[str, Any],
+    *,
+    account_id: str | None = None,
+    notification_id: int | None = None,
+) -> None:
+    if channel == "email":
+        send_email_notification(destination, subject, message)
+        return
+    if channel == "toss_inapp":
+        if not account_id:
+            raise HTTPException(status_code=400, detail="토스 인앱 알림에는 account_id가 필요합니다.")
+        create_toss_inapp_alert_event(account_id, destination, subject, message, payload, notification_id)
+        return
+    raise HTTPException(status_code=400, detail="지원하지 않는 알림 채널입니다.")
+
+
+def format_closing_bet_notification_message(evaluation: dict[str, Any], threshold_score: int) -> tuple[str, str]:
+    company = evaluation.get("company_name") or evaluation.get("resolved_ticker") or evaluation.get("ticker")
+    subject = f"[한눈투자] 종가베팅 알림 - {company}"
+    message = (
+        f"{company} 종가베팅 점수 {evaluation.get('total_score')}점이 기준 {threshold_score}점을 넘었습니다.\n"
+        f"- 시장: {sector_market_name(evaluation.get('market', 'krx'))}\n"
+        f"- 시그널 날짜: {evaluation.get('signal_date')}\n"
+        f"- 시나리오: {evaluation.get('scenario')}\n"
+        f"- 해석: {evaluation.get('score_label')}\n"
+        f"- 행동 가이드: {evaluation.get('score_action')}\n"
+        f"- 제외 신호: {', '.join(evaluation.get('risk_flags') or ['없음'])}"
+    )
+    return subject, message
+
+
+def ensure_notification_dispatch_token(x_dispatch_token: str | None) -> None:
+    if not NOTIFICATION_DISPATCH_TOKEN:
+        raise HTTPException(status_code=503, detail="NOTIFICATION_DISPATCH_TOKEN 설정이 없어 배치 발송을 사용할 수 없습니다.")
+    if (x_dispatch_token or "").strip() != NOTIFICATION_DISPATCH_TOKEN:
+        raise HTTPException(status_code=401, detail="배치 발송 토큰이 올바르지 않습니다.")
+
+
+def list_closing_bet_notifications(account_id: str) -> list[dict[str, Any]]:
+    ensure_paper_account(account_id)
+    rows = call_supabase(
+        "GET",
+        "/rest/v1/closing_bet_notifications",
+        params={
+            "account_id": f"eq.{account_id}",
+            "select": "id,account_id,ticker,market,krx_exchange,channel,destination,threshold_score,active,company_name,resolved_ticker,last_score,last_signal_date,last_notified_at,last_evaluated_at,created_at,updated_at",
+            "order": "updated_at.desc",
+        },
+    ) or []
+    return normalize_value(rows)
+
+
+def list_closing_bet_alert_events(account_id: str) -> list[dict[str, Any]]:
+    ensure_paper_account(account_id)
+    rows = call_supabase(
+        "GET",
+        "/rest/v1/closing_bet_alert_events",
+        params={
+            "account_id": f"eq.{account_id}",
+            "select": "id,notification_id,delivered_channel,title,message,ticker,market,signal_date,total_score,is_read,created_at,read_at",
+            "order": "created_at.desc",
+            "limit": 50,
+        },
+    ) or []
+    return normalize_value(rows)
+
+
+def mark_closing_bet_alert_event_read(account_id: str, alert_id: int) -> dict[str, Any]:
+    ensure_paper_account(account_id)
+    rows = call_supabase(
+        "PATCH",
+        "/rest/v1/closing_bet_alert_events",
+        params={
+            "id": f"eq.{alert_id}",
+            "account_id": f"eq.{account_id}",
+        },
+        json_payload={
+            "is_read": True,
+            "read_at": datetime.utcnow().isoformat(),
+        },
+        prefer="return=representation",
+    ) or []
+    if not rows:
+        raise HTTPException(status_code=404, detail="알림을 찾지 못했습니다.")
+    return normalize_value(rows[0])
+
+
+def upsert_closing_bet_notification(request: ClosingBetNotificationRequest) -> dict[str, Any]:
+    ensure_paper_account(request.account_id or "")
+    evaluation = evaluate_closing_bet(request.ticker, request.market, request.krx_exchange)
+    payload = [{
+        "account_id": request.account_id,
+        "ticker": request.ticker,
+        "market": request.market,
+        "krx_exchange": request.krx_exchange,
+        "channel": request.channel,
+        "destination": request.destination,
+        "threshold_score": request.threshold_score,
+        "active": request.active,
+        "company_name": evaluation.get("company_name"),
+        "resolved_ticker": evaluation.get("resolved_ticker"),
+        "last_score": evaluation.get("total_score"),
+        "last_signal_date": evaluation.get("signal_date"),
+        "last_evaluated_at": datetime.utcnow().isoformat(),
+        "updated_at": datetime.utcnow().isoformat(),
+    }]
+    rows = call_supabase(
+        "POST",
+        "/rest/v1/closing_bet_notifications",
+        params={"on_conflict": "account_id,channel,market,ticker,destination"},
+        json_payload=payload,
+        prefer="resolution=merge-duplicates,return=representation",
+    ) or []
+    if not rows:
+        raise HTTPException(status_code=503, detail="알림 구독을 저장하지 못했습니다.")
+    return normalize_value({"subscription": rows[0], "evaluation": evaluation})
+
+
+def delete_closing_bet_notification(account_id: str, notification_id: int) -> dict[str, Any]:
+    ensure_paper_account(account_id)
+    call_supabase(
+        "DELETE",
+        "/rest/v1/closing_bet_notifications",
+        params={
+            "id": f"eq.{notification_id}",
+            "account_id": f"eq.{account_id}",
+        },
+    )
+    return {"deleted": True, "id": notification_id}
+
+
+def test_closing_bet_notification(request: ClosingBetNotificationTestRequest) -> dict[str, Any]:
+    subject = f"[한눈투자] {request.market.upper()} 종가베팅 테스트"
+    message = (
+        f"테스트 알림입니다.\n"
+        f"- 채널: {request.channel}\n"
+        f"- 종목: {request.ticker}\n"
+        f"- 시장: {request.market}\n"
+        f"- 발송 시각: {datetime.utcnow().isoformat()}Z"
+    )
+    send_closing_bet_notification(
+        request.channel,
+        request.destination,
+        subject,
+        message,
+        {"type": "closing_bet_test", "ticker": request.ticker, "market": request.market},
+        account_id=request.account_id,
+    )
+    return {"sent": True, "channel": request.channel, "destination": request.destination}
+
+
+def dispatch_closing_bet_notifications(market: str | None = None, limit: int = 100) -> dict[str, Any]:
+    filters = {
+        "active": "eq.true",
+        "select": "id,account_id,ticker,market,krx_exchange,channel,destination,threshold_score,last_signal_date,last_notified_at",
+        "order": "updated_at.asc",
+        "limit": limit,
+    }
+    if market:
+        filters["market"] = f"eq.{market}"
+
+    subscriptions = call_supabase(
+        "GET",
+        "/rest/v1/closing_bet_notifications",
+        params=filters,
+    ) or []
+
+    dispatched: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    failures: list[dict[str, Any]] = []
+
+    for item in subscriptions:
+        try:
+            evaluation = evaluate_closing_bet(item["ticker"], item["market"], item.get("krx_exchange", "auto"))
+            score = int(evaluation.get("total_score") or 0)
+            signal_date = str(evaluation.get("signal_date") or "")
+            threshold_score = int(item.get("threshold_score") or 70)
+            if score < threshold_score:
+                skipped.append({"id": item["id"], "reason": "threshold_not_met", "score": score})
+            elif item.get("last_signal_date") == signal_date and item.get("last_notified_at"):
+                skipped.append({"id": item["id"], "reason": "already_notified_for_signal_date", "score": score})
+            else:
+                subject, message = format_closing_bet_notification_message(evaluation, threshold_score)
+                send_closing_bet_notification(
+                    item["channel"],
+                    item["destination"],
+                    subject,
+                    message,
+                    evaluation,
+                    account_id=item["account_id"],
+                    notification_id=item["id"],
+                )
+                dispatched.append({"id": item["id"], "score": score, "signal_date": signal_date})
+                item["last_notified_at"] = datetime.utcnow().isoformat()
+
+            call_supabase(
+                "PATCH",
+                "/rest/v1/closing_bet_notifications",
+                params={"id": f"eq.{item['id']}"},
+                json_payload={
+                    "company_name": evaluation.get("company_name"),
+                    "resolved_ticker": evaluation.get("resolved_ticker"),
+                    "last_score": score,
+                    "last_signal_date": signal_date,
+                    "last_evaluated_at": datetime.utcnow().isoformat(),
+                    "updated_at": datetime.utcnow().isoformat(),
+                    **({"last_notified_at": item["last_notified_at"]} if item.get("last_notified_at") else {}),
+                },
+            )
+        except Exception as exc:
+            failures.append({"id": item.get("id"), "reason": str(exc)})
+
+    return normalize_value(
+        {
+            "market": market,
+            "checked": len(subscriptions),
+            "sent": len(dispatched),
+            "skipped": skipped,
+            "failures": failures,
+            "dispatched": dispatched,
+        }
+    )
+
+
 def build_feature_status() -> dict[str, dict[str, str | bool]]:
     ai_status = "ready"
     ai_reason = "뉴스 수집과 Gemini 분석을 모두 사용할 수 있습니다."
@@ -680,6 +1445,37 @@ def sector_market_name(market: str) -> str:
     return "국내" if market == "krx" else "미국"
 
 
+def previous_business_day(target: date) -> date:
+    current = target
+    while current.weekday() >= 5:
+        current -= timedelta(days=1)
+    return current
+
+
+def resolve_sector_snapshot_cutoff_date(market: str, now: datetime | None = None) -> date:
+    normalized_market = normalize_market(market)
+    timezone = MARKET_TIMEZONES[normalized_market]
+    market_now = now.astimezone(timezone) if now else datetime.now(timezone)
+    close_time = MARKET_CLOSE_TIMES[normalized_market]
+    market_today = market_now.date()
+
+    if market_today.weekday() >= 5:
+        return previous_business_day(market_today)
+
+    market_close = datetime.combine(market_today, close_time, tzinfo=timezone)
+    if market_now >= market_close:
+        return market_today
+
+    return previous_business_day(market_today - timedelta(days=1))
+
+
+def trim_series_to_cutoff(series: pd.Series, cutoff_date: date) -> pd.Series:
+    if series.empty:
+        return series
+    index = pd.to_datetime(series.index)
+    return series.loc[index.normalize() <= pd.Timestamp(cutoff_date)].copy()
+
+
 def calculate_return_pct(series: pd.Series, lookback: int) -> float | None:
     clean = series.dropna().astype(float)
     if len(clean) <= lookback:
@@ -739,6 +1535,7 @@ def load_close_series(
     end_date: str,
     market: str = "us",
     krx_exchange: str = "auto",
+    cutoff_date: date | None = None,
 ) -> pd.Series:
     try:
         data = get_stock_data(
@@ -754,7 +1551,10 @@ def load_close_series(
     if data.empty or "Close" not in data.columns:
         return pd.Series(dtype=float)
 
-    return data["Close"].dropna().astype(float).copy()
+    series = data["Close"].dropna().astype(float).copy()
+    if cutoff_date is not None:
+        series = trim_series_to_cutoff(series, cutoff_date)
+    return series
 
 
 def build_equal_weight_basket(component_series: list[pd.Series]) -> pd.Series:
@@ -828,10 +1628,16 @@ def build_sector_row(
     }
 
 
-def build_us_sector_rows(start_date: str, end_date: str) -> list[dict[str, Any]]:
+def build_us_sector_rows(start_date: str, end_date: str, cutoff_date: date) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for sector in US_SECTOR_UNIVERSE:
-        series = load_close_series(sector["proxy"], start_date, end_date, market="us")
+        series = load_close_series(
+            sector["proxy"],
+            start_date,
+            end_date,
+            market="us",
+            cutoff_date=cutoff_date,
+        )
         row = build_sector_row(
             key=sector["key"],
             name=sector["name"],
@@ -846,7 +1652,7 @@ def build_us_sector_rows(start_date: str, end_date: str) -> list[dict[str, Any]]
     return rows
 
 
-def build_krx_sector_rows(start_date: str, end_date: str) -> list[dict[str, Any]]:
+def build_krx_sector_rows(start_date: str, end_date: str, cutoff_date: date) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for sector in KRX_SECTOR_UNIVERSE:
         component_series: list[pd.Series] = []
@@ -858,6 +1664,7 @@ def build_krx_sector_rows(start_date: str, end_date: str) -> list[dict[str, Any]
                 end_date,
                 market="krx",
                 krx_exchange=component["krx_exchange"],
+                cutoff_date=cutoff_date,
             )
             if series.empty:
                 continue
@@ -899,13 +1706,14 @@ def summarize_sector_rows(market: str, rows: list[dict[str, Any]]) -> str:
 
 def create_sector_snapshot(market: str) -> dict[str, Any]:
     normalized_market = normalize_market(market)
-    end_date = date.today() + timedelta(days=1)
+    cutoff_date = resolve_sector_snapshot_cutoff_date(normalized_market)
+    end_date = cutoff_date + timedelta(days=1)
     start_date = end_date - timedelta(days=220)
 
     if normalized_market == "krx":
-        rows = build_krx_sector_rows(start_date.isoformat(), end_date.isoformat())
+        rows = build_krx_sector_rows(start_date.isoformat(), end_date.isoformat(), cutoff_date)
     else:
-        rows = build_us_sector_rows(start_date.isoformat(), end_date.isoformat())
+        rows = build_us_sector_rows(start_date.isoformat(), end_date.isoformat(), cutoff_date)
 
     if not rows:
         raise HTTPException(status_code=503, detail="섹터 데이터를 가져오지 못했습니다.")
@@ -1167,6 +1975,77 @@ def quote_data(ticker: str, market: str = "us", krx_exchange: str = "auto") -> d
     return create_quote_snapshot(ticker, market=market, krx_exchange=krx_exchange)
 
 
+@app.post("/closing-bet/evaluate")
+def closing_bet_evaluate(request: ClosingBetEvaluationRequest) -> dict[str, Any]:
+    return evaluate_closing_bet(request.ticker, request.market, request.krx_exchange)
+
+
+@app.get("/closing-bet/notifications")
+def closing_bet_notification_list(
+    account_id: str | None = None,
+    x_app_session: str | None = Header(default=None, alias="X-App-Session"),
+) -> dict[str, Any]:
+    normalized_account_id = resolve_paper_account_id(account_id, x_app_session)
+    return {"items": list_closing_bet_notifications(normalized_account_id)}
+
+
+@app.get("/closing-bet/alerts")
+def closing_bet_alert_list(
+    account_id: str | None = None,
+    x_app_session: str | None = Header(default=None, alias="X-App-Session"),
+) -> dict[str, Any]:
+    normalized_account_id = resolve_paper_account_id(account_id, x_app_session)
+    return {"items": list_closing_bet_alert_events(normalized_account_id)}
+
+
+@app.post("/closing-bet/notifications")
+def closing_bet_notification_upsert(
+    request: ClosingBetNotificationRequest,
+    x_app_session: str | None = Header(default=None, alias="X-App-Session"),
+) -> dict[str, Any]:
+    request.account_id = resolve_paper_account_id(request.account_id, x_app_session)
+    return upsert_closing_bet_notification(request)
+
+
+@app.delete("/closing-bet/notifications/{notification_id}")
+def closing_bet_notification_delete(
+    notification_id: int,
+    account_id: str | None = None,
+    x_app_session: str | None = Header(default=None, alias="X-App-Session"),
+) -> dict[str, Any]:
+    normalized_account_id = resolve_paper_account_id(account_id, x_app_session)
+    return delete_closing_bet_notification(normalized_account_id, notification_id)
+
+
+@app.post("/closing-bet/alerts/{alert_id}/read")
+def closing_bet_alert_mark_read(
+    alert_id: int,
+    account_id: str | None = None,
+    x_app_session: str | None = Header(default=None, alias="X-App-Session"),
+) -> dict[str, Any]:
+    normalized_account_id = resolve_paper_account_id(account_id, x_app_session)
+    return {"item": mark_closing_bet_alert_event_read(normalized_account_id, alert_id)}
+
+
+@app.post("/closing-bet/notifications/test")
+def closing_bet_notification_send_test(
+    request: ClosingBetNotificationTestRequest,
+    x_app_session: str | None = Header(default=None, alias="X-App-Session"),
+) -> dict[str, Any]:
+    if request.channel == "toss_inapp":
+        request.account_id = resolve_paper_account_id(request.account_id, x_app_session)
+    return test_closing_bet_notification(request)
+
+
+@app.post("/closing-bet/notifications/dispatch")
+def closing_bet_notification_dispatch(
+    request: ClosingBetNotificationDispatchRequest,
+    x_dispatch_token: str | None = Header(default=None, alias="X-Dispatch-Token"),
+) -> dict[str, Any]:
+    ensure_notification_dispatch_token(x_dispatch_token)
+    return dispatch_closing_bet_notifications(request.market, request.limit)
+
+
 @app.get("/paper-trading/state")
 def paper_trading_state(
     account_id: str | None = None,
@@ -1196,51 +2075,7 @@ def paper_trading_reset(
 
 @app.get("/sentiment/{ticker}")
 def sentiment_analysis(ticker: str, market: str = "us", krx_exchange: str = "auto") -> dict[str, Any]:
-    normalized_ticker = normalize_ticker_input(ticker)
-    normalized_market, normalized_exchange = validate_market_params(market, krx_exchange)
-    profile = get_symbol_profile(normalized_ticker, market=normalized_market, krx_exchange=normalized_exchange)
-    articles, attempted_queries = gemini_analyzer.get_news_candidates(
-        company_name=profile.get("name"),
-        ticker=profile.get("resolved_ticker", normalized_ticker),
-        market=profile.get("market", normalized_market),
-    )
-    if not articles:
-        if not gemini_analyzer.NEWS_API_KEY:
-            summary = "백엔드에 NEWS_API_KEY가 설정되지 않았습니다."
-        else:
-            summary = "국내 종목 뉴스 검색 결과가 없습니다. 회사명과 종목코드로 여러 번 재시도했지만 최신 뉴스를 찾지 못했습니다."
-        return {
-            "ticker": normalized_ticker,
-            "resolved_ticker": profile.get("resolved_ticker", normalized_ticker),
-            "market": profile.get("market", normalized_market),
-            "krx_exchange": profile.get("krx_exchange", normalized_exchange),
-            "company_name": profile.get("name"),
-            "sentiment_score": 50,
-            "summary": summary,
-            "articles": [],
-            "attempted_queries": attempted_queries,
-            "news_api_enabled": bool(gemini_analyzer.NEWS_API_KEY),
-        }
-
-    try:
-        result_json = gemini_analyzer.analyze_sentiment_with_gemini(json.dumps(articles, ensure_ascii=False))
-        result = json.loads(result_json)
-    except Exception as exc:
-        result = {
-            "sentiment_score": 50,
-            "summary": f"AI 분석을 완료하지 못해 중립 점수로 대체했습니다. 사유: {exc}",
-            "articles": articles,
-        }
-
-    result["ticker"] = normalized_ticker
-    result["resolved_ticker"] = profile.get("resolved_ticker", normalized_ticker)
-    result["market"] = profile.get("market", normalized_market)
-    result["krx_exchange"] = profile.get("krx_exchange", normalized_exchange)
-    result["company_name"] = profile.get("name")
-    result["articles"] = result.get("articles", articles)
-    result["attempted_queries"] = attempted_queries
-    result["news_api_enabled"] = bool(gemini_analyzer.NEWS_API_KEY)
-    return normalize_value(result)
+    return create_sentiment_snapshot(ticker, market=market, krx_exchange=krx_exchange)
 
 
 @app.post("/backtest/moving_average")

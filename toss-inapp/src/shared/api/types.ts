@@ -76,6 +76,34 @@ export type SentimentResult = {
   news_api_enabled?: boolean
 }
 
+export type ClosingBetEvaluation = {
+  ticker: string
+  resolved_ticker: string
+  market: Market
+  krx_exchange: KrxExchange
+  company_name?: string | null
+  signal_date: string
+  quote: QuoteSnapshot
+  sentiment: SentimentResult | null
+  sector_snapshot: SectorSnapshot
+  resolved_sector: SectorRow | null
+  scores: {
+    sector_strength: number
+    close_strength: number
+    volume_persistence: number
+    leader_status: number
+    news_follow_through: number
+    tomorrow_catalyst: number
+    risk_control: number
+  }
+  scenario: string
+  scenario_modifier: number
+  total_score: number
+  score_label: string
+  score_action: string
+  risk_flags: string[]
+}
+
 export type SectorRow = {
   key: string
   name: string
@@ -148,6 +176,53 @@ export type PaperTradingOrderRequest = {
   krx_exchange?: KrxExchange
   side: 'buy' | 'sell'
   shares: number
+}
+
+export type ClosingBetNotificationChannel = 'email' | 'toss_inapp'
+
+export type ClosingBetNotification = {
+  id: number
+  account_id: string
+  ticker: string
+  resolved_ticker?: string | null
+  company_name?: string | null
+  market: Market
+  krx_exchange: KrxExchange
+  channel: ClosingBetNotificationChannel
+  destination: string
+  threshold_score: number
+  active: boolean
+  last_score?: number | null
+  last_signal_date?: string | null
+  last_notified_at?: string | null
+  last_evaluated_at?: string | null
+  created_at?: string | null
+  updated_at?: string | null
+}
+
+export type ClosingBetNotificationUpsertRequest = {
+  ticker: string
+  market: Market
+  krx_exchange: KrxExchange
+  channel: ClosingBetNotificationChannel
+  destination: string
+  threshold_score: number
+  active: boolean
+}
+
+export type ClosingBetAlertEvent = {
+  id: number
+  notification_id?: number | null
+  delivered_channel: ClosingBetNotificationChannel
+  title: string
+  message: string
+  ticker: string
+  market: Market
+  signal_date?: string | null
+  total_score?: number | null
+  is_read: boolean
+  created_at?: string | null
+  read_at?: string | null
 }
 
 export type BaseBacktestRequest = {

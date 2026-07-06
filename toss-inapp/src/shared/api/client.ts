@@ -4,6 +4,10 @@ import type {
   BacktestResult,
   BollingerBandsBacktestRequest,
   BollingerBandsOptimizationRequest,
+  ClosingBetAlertEvent,
+  ClosingBetEvaluation,
+  ClosingBetNotification,
+  ClosingBetNotificationUpsertRequest,
   KrxExchange,
   KRXSearchResult,
   Market,
@@ -136,6 +140,62 @@ export const apiClient = {
       method: 'POST',
       body: {},
       headers: { 'X-App-Session': sessionToken },
+    })
+  },
+
+  closingBetEvaluate(payload: { ticker: string; market: Market; krx_exchange: KrxExchange }) {
+    return apiRequest<ClosingBetEvaluation>('/closing-bet/evaluate', {
+      method: 'POST',
+      body: payload,
+    })
+  },
+
+  closingBetNotifications(sessionToken: string, signal?: AbortSignal) {
+    return apiRequest<{ items: ClosingBetNotification[] }>('/closing-bet/notifications', {
+      headers: { 'X-App-Session': sessionToken },
+      signal,
+    })
+  },
+
+  closingBetAlerts(sessionToken: string, signal?: AbortSignal) {
+    return apiRequest<{ items: ClosingBetAlertEvent[] }>('/closing-bet/alerts', {
+      headers: { 'X-App-Session': sessionToken },
+      signal,
+    })
+  },
+
+  closingBetNotificationUpsert(sessionToken: string, payload: ClosingBetNotificationUpsertRequest) {
+    return apiRequest<{ subscription: ClosingBetNotification; evaluation: ClosingBetEvaluation }>('/closing-bet/notifications', {
+      method: 'POST',
+      body: payload,
+      headers: { 'X-App-Session': sessionToken },
+    })
+  },
+
+  closingBetNotificationDelete(sessionToken: string, notificationId: number) {
+    return apiRequest<{ deleted: boolean; id: number }>(`/closing-bet/notifications/${notificationId}`, {
+      method: 'DELETE',
+      headers: { 'X-App-Session': sessionToken },
+    })
+  },
+
+  closingBetAlertMarkRead(sessionToken: string, alertId: number) {
+    return apiRequest<{ item: ClosingBetAlertEvent }>(`/closing-bet/alerts/${alertId}/read`, {
+      method: 'POST',
+      headers: { 'X-App-Session': sessionToken },
+    })
+  },
+
+  closingBetNotificationTest(payload: {
+    channel: 'email' | 'toss_inapp'
+    destination: string
+    ticker: string
+    market: Market
+  }, sessionToken?: string) {
+    return apiRequest<{ sent: boolean; channel: string; destination: string }>('/closing-bet/notifications/test', {
+      method: 'POST',
+      body: payload,
+      headers: sessionToken ? { 'X-App-Session': sessionToken } : undefined,
     })
   },
 
