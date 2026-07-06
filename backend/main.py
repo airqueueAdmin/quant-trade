@@ -330,12 +330,6 @@ class ClosingBetEvaluationRequest(BaseModel):
     market: str = Field(default="krx")
     krx_exchange: str = Field(default="auto")
 
-    @field_validator("ticker")
-    @classmethod
-    def normalize_ticker(cls, value: str, info) -> str:
-        market = str(info.data.get("market", "krx"))
-        return normalize_market_ticker_input(value, market)
-
     @field_validator("market")
     @classmethod
     def validate_market(cls, value: str) -> str:
@@ -346,6 +340,11 @@ class ClosingBetEvaluationRequest(BaseModel):
     def validate_krx_exchange(cls, value: str) -> str:
         return normalize_krx_exchange(value)
 
+    @model_validator(mode="after")
+    def normalize_market_ticker(self) -> "ClosingBetEvaluationRequest":
+        self.ticker = normalize_market_ticker_input(self.ticker, self.market)
+        return self
+
 
 class ClosingBetNotificationRequest(PaperTradingAccountRequest):
     ticker: str = Field(min_length=1, max_length=32)
@@ -355,12 +354,6 @@ class ClosingBetNotificationRequest(PaperTradingAccountRequest):
     destination: str = Field(min_length=3, max_length=200)
     threshold_score: int = Field(default=70, ge=0, le=100)
     active: bool = Field(default=True)
-
-    @field_validator("ticker")
-    @classmethod
-    def normalize_notification_ticker(cls, value: str, info) -> str:
-        market = str(info.data.get("market", "krx"))
-        return normalize_market_ticker_input(value, market)
 
     @field_validator("market")
     @classmethod
@@ -387,6 +380,11 @@ class ClosingBetNotificationRequest(PaperTradingAccountRequest):
         if not normalized:
             raise ValueError("destination is required")
         return normalized
+
+    @model_validator(mode="after")
+    def normalize_market_ticker(self) -> "ClosingBetNotificationRequest":
+        self.ticker = normalize_market_ticker_input(self.ticker, self.market)
+        return self
 
 
 class ClosingBetNotificationDispatchRequest(BaseModel):
@@ -423,16 +421,15 @@ class ClosingBetNotificationTestRequest(PaperTradingAccountRequest):
             raise ValueError("destination is required")
         return normalized
 
-    @field_validator("ticker")
-    @classmethod
-    def normalize_test_ticker(cls, value: str, info) -> str:
-        market = str(info.data.get("market", "krx"))
-        return normalize_market_ticker_input(value, market)
-
     @field_validator("market")
     @classmethod
     def validate_test_market(cls, value: str) -> str:
         return normalize_market(value)
+
+    @model_validator(mode="after")
+    def normalize_market_ticker(self) -> "ClosingBetNotificationTestRequest":
+        self.ticker = normalize_market_ticker_input(self.ticker, self.market)
+        return self
 
 
 def normalize_paper_account_id(value: str) -> str:
