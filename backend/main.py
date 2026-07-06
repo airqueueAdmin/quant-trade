@@ -332,8 +332,9 @@ class ClosingBetEvaluationRequest(BaseModel):
 
     @field_validator("ticker")
     @classmethod
-    def normalize_ticker(cls, value: str) -> str:
-        return normalize_ticker_input(value)
+    def normalize_ticker(cls, value: str, info) -> str:
+        market = str(info.data.get("market", "krx"))
+        return normalize_market_ticker_input(value, market)
 
     @field_validator("market")
     @classmethod
@@ -357,8 +358,9 @@ class ClosingBetNotificationRequest(PaperTradingAccountRequest):
 
     @field_validator("ticker")
     @classmethod
-    def normalize_notification_ticker(cls, value: str) -> str:
-        return normalize_ticker_input(value)
+    def normalize_notification_ticker(cls, value: str, info) -> str:
+        market = str(info.data.get("market", "krx"))
+        return normalize_market_ticker_input(value, market)
 
     @field_validator("market")
     @classmethod
@@ -423,8 +425,9 @@ class ClosingBetNotificationTestRequest(PaperTradingAccountRequest):
 
     @field_validator("ticker")
     @classmethod
-    def normalize_test_ticker(cls, value: str) -> str:
-        return normalize_ticker_input(value)
+    def normalize_test_ticker(cls, value: str, info) -> str:
+        market = str(info.data.get("market", "krx"))
+        return normalize_market_ticker_input(value, market)
 
     @field_validator("market")
     @classmethod
@@ -439,6 +442,23 @@ def normalize_paper_account_id(value: str) -> str:
     allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_")
     if any(char not in allowed for char in normalized):
         raise ValueError("account_id may only contain letters, numbers, hyphen, and underscore")
+    return normalized
+
+
+def normalize_market_ticker_input(value: str, market: str) -> str:
+    normalized = normalize_ticker_input(value)
+    if normalize_market(market) != "krx":
+        return normalized
+
+    if normalized.endswith((".KS", ".KQ")):
+        digit_code = "".join(char for char in normalized if char.isdigit())
+        if len(digit_code) == 6:
+            return digit_code
+
+    digit_code = "".join(char for char in normalized if char.isdigit())
+    if len(digit_code) == 6:
+        return digit_code
+
     return normalized
 
 
@@ -661,10 +681,22 @@ def ensure_paper_account(account_id: str) -> dict[str, Any]:
     created = call_supabase(
         "POST",
         "/rest/v1/paper_trading_accounts",
+        params={"on_conflict": "account_id"},
         json_payload=[{"account_id": account_id, "cash_krw": DEFAULT_PAPER_SEED_CASH_KRW, "seed_cash_krw": DEFAULT_PAPER_SEED_CASH_KRW}],
-        prefer="return=representation",
+        prefer="resolution=merge-duplicates,return=representation",
     ) or []
     if not created:
+        fallback_rows = call_supabase(
+            "GET",
+            "/rest/v1/paper_trading_accounts",
+            params={
+                "account_id": f"eq.{account_id}",
+                "select": "account_id,cash_krw,seed_cash_krw,updated_at",
+                "limit": 1,
+            },
+        ) or []
+        if fallback_rows:
+            return fallback_rows[0]
         raise HTTPException(status_code=503, detail="Supabase 계좌를 생성하지 못했습니다.")
     return created[0]
 
@@ -988,7 +1020,7 @@ def score_action(score: int) -> str:
 
 
 def evaluate_closing_bet(ticker: str, market: str = "krx", krx_exchange: str = "auto") -> dict[str, Any]:
-    normalized_ticker = normalize_ticker_input(ticker)
+    normalized_ticker = normalize_market_ticker_input(ticker, market)
     normalized_market, normalized_exchange = validate_market_params(market, krx_exchange)
     start_date, end_date = closing_bet_recent_stock_window(normalized_market)
     stock_data = ensure_data(normalized_ticker, start_date, end_date, market=normalized_market, krx_exchange=normalized_exchange)
