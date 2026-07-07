@@ -4,6 +4,7 @@ from datetime import date, datetime, time, timedelta
 import base64
 import hashlib
 import hmac
+import logging
 import os
 import secrets
 import smtplib
@@ -38,6 +39,7 @@ from strategies.moving_average import moving_average_cross_strategy
 from strategies.rsi import rsi_strategy
 
 load_dotenv()
+logger = logging.getLogger("quant.toss")
 
 
 def write_secret_pem_file(secret_value: str, filename: str) -> str:
@@ -68,6 +70,28 @@ def resolve_secret_file_path(env_var_name: str, fallback_filenames: list[str]) -
         if candidate and os.path.exists(candidate):
             return candidate
     return configured_path
+
+
+def file_sha256(path: str | None) -> str | None:
+    if not path or not os.path.exists(path):
+        return None
+
+    digest = hashlib.sha256()
+    with open(path, "rb") as file_obj:
+        for chunk in iter(lambda: file_obj.read(8192), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def mask_toss_user_key(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    if not normalized:
+        return None
+    if len(normalized) <= 6:
+        return f"{normalized}***"
+    return f"{normalized[:6]}***"
 
 
 APPS_IN_TOSS_APP_NAME = (os.getenv("APPS_IN_TOSS_APP_NAME") or "glance-invest").strip() or "glance-invest"
@@ -103,6 +127,7 @@ APPS_IN_TOSS_KEY_PATH = resolve_secret_file_path(
 )
 TOSS_SMART_MESSAGE_BASE_URL = (os.getenv("TOSS_SMART_MESSAGE_BASE_URL") or "https://apps-in-toss-api.toss.im").rstrip("/")
 TOSS_SMART_MESSAGE_TEMPLATE_CODE = (os.getenv("TOSS_SMART_MESSAGE_TEMPLATE_CODE") or "glance-invest-reminder").strip() or "glance-invest-reminder"
+APPS_IN_TOSS_CERT_SHA256 = file_sha256(APPS_IN_TOSS_CERT_PATH)
 MARKET_TIMEZONES = {
     "krx": ZoneInfo("Asia/Seoul"),
     "us": ZoneInfo("America/New_York"),
@@ -1244,6 +1269,10 @@ def build_toss_smart_message_context(evaluation: dict[str, Any]) -> dict[str, An
     }
 
 
+def log_toss_smart_message_event(event: str, **payload: Any) -> None:
+    logger.warning("toss_smart_message %s", json.dumps({"event": event, **payload}, ensure_ascii=False, sort_keys=True))
+
+
 def call_toss_smart_message_api(
     path: str,
     *,
@@ -1252,6 +1281,19 @@ def call_toss_smart_message_api(
 ) -> dict[str, Any]:
     if not is_toss_smart_message_configured():
         raise HTTPException(status_code=503, detail="스마트 발송 연동 설정이 없어 Toss 메시지를 보낼 수 없습니다.")
+
+    masked_user_key = mask_toss_user_key(toss_user_key)
+    template_set_code = str(payload.get("templateSetCode") or "")
+    deployment_id = str(payload.get("deploymentId") or "") or None
+    log_toss_smart_message_event(
+        "request",
+        app_name=APPS_IN_TOSS_APP_NAME,
+        path=path,
+        template_set_code=template_set_code,
+        deployment_id=deployment_id,
+        masked_user_key=masked_user_key,
+        cert_sha256=APPS_IN_TOSS_CERT_SHA256,
+    )
 
     response = requests.post(
         f"{TOSS_SMART_MESSAGE_BASE_URL}{path}",
@@ -1270,6 +1312,17 @@ def call_toss_smart_message_api(
             detail = str(response.json())
         except Exception:
             pass
+        log_toss_smart_message_event(
+            "http_error",
+            app_name=APPS_IN_TOSS_APP_NAME,
+            path=path,
+            template_set_code=template_set_code,
+            deployment_id=deployment_id,
+            masked_user_key=masked_user_key,
+            cert_sha256=APPS_IN_TOSS_CERT_SHA256,
+            status_code=response.status_code,
+            response_detail=detail[:500],
+        )
         raise HTTPException(status_code=503, detail=f"Toss 스마트 발송 요청에 실패했습니다: {detail}")
 
     try:
@@ -1279,10 +1332,31 @@ def call_toss_smart_message_api(
 
     if result.get("resultType") == "FAIL":
         error = result.get("error") or {}
+        log_toss_smart_message_event(
+            "result_fail",
+            app_name=APPS_IN_TOSS_APP_NAME,
+            path=path,
+            template_set_code=template_set_code,
+            deployment_id=deployment_id,
+            masked_user_key=masked_user_key,
+            cert_sha256=APPS_IN_TOSS_CERT_SHA256,
+            error_code=error.get("errorCode"),
+            reason=error.get("reason"),
+        )
         raise HTTPException(
             status_code=503,
             detail=format_toss_smart_message_failure_detail(error),
         )
+    log_toss_smart_message_event(
+        "result_success",
+        app_name=APPS_IN_TOSS_APP_NAME,
+        path=path,
+        template_set_code=template_set_code,
+        deployment_id=deployment_id,
+        masked_user_key=masked_user_key,
+        cert_sha256=APPS_IN_TOSS_CERT_SHA256,
+        result_type=result.get("resultType"),
+    )
     return result
 
 
