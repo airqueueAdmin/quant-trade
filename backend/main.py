@@ -1173,6 +1173,12 @@ def is_toss_smart_message_configured() -> bool:
 
 
 def get_toss_smart_message_diagnostics() -> dict[str, Any]:
+    def safe_dir_listing(path: str) -> list[str]:
+        try:
+            return sorted(os.listdir(path))[:20]
+        except Exception:
+            return []
+
     return {
         "configured": is_toss_smart_message_configured(),
         "cert_path_set": bool(APPS_IN_TOSS_CERT_PATH),
@@ -1185,6 +1191,10 @@ def get_toss_smart_message_diagnostics() -> dict[str, Any]:
         "cert_path_basename": os.path.basename(APPS_IN_TOSS_CERT_PATH) if APPS_IN_TOSS_CERT_PATH else None,
         "key_path_basename": os.path.basename(APPS_IN_TOSS_KEY_PATH) if APPS_IN_TOSS_KEY_PATH else None,
         "template_code": TOSS_SMART_MESSAGE_TEMPLATE_CODE or None,
+        "cwd": os.getcwd(),
+        "secrets_dir_exists": os.path.isdir("/etc/secrets"),
+        "secrets_dir_files": safe_dir_listing("/etc/secrets"),
+        "cwd_files": safe_dir_listing(os.getcwd()),
     }
 
 
