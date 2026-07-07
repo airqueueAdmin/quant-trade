@@ -38,6 +38,22 @@ from strategies.rsi import rsi_strategy
 
 load_dotenv()
 
+
+def resolve_secret_file_path(env_var_name: str, fallback_filenames: list[str]) -> str:
+    configured_path = (os.getenv(env_var_name) or "").strip()
+    candidates: list[str] = []
+    if configured_path:
+        candidates.append(configured_path)
+    for filename in fallback_filenames:
+        candidates.append(os.path.join("/etc/secrets", filename))
+        candidates.append(filename)
+
+    for candidate in candidates:
+        if candidate and os.path.exists(candidate):
+            return candidate
+    return configured_path
+
+
 APPS_IN_TOSS_APP_NAME = (os.getenv("APPS_IN_TOSS_APP_NAME") or "glance-invest").strip() or "glance-invest"
 DEFAULT_CORS_ORIGINS = [
     "http://localhost:4173",
@@ -61,8 +77,14 @@ SMTP_PASSWORD = os.getenv("SMTP_PASSWORD") or ""
 SMTP_FROM_EMAIL = (os.getenv("SMTP_FROM_EMAIL") or SMTP_USERNAME or "").strip()
 SMTP_USE_TLS = (os.getenv("SMTP_USE_TLS") or "true").strip().lower() not in {"0", "false", "no"}
 NOTIFICATION_DISPATCH_TOKEN = (os.getenv("NOTIFICATION_DISPATCH_TOKEN") or "").strip()
-APPS_IN_TOSS_CERT_PATH = (os.getenv("APPS_IN_TOSS_CERT_PATH") or "").strip()
-APPS_IN_TOSS_KEY_PATH = (os.getenv("APPS_IN_TOSS_KEY_PATH") or "").strip()
+APPS_IN_TOSS_CERT_PATH = resolve_secret_file_path(
+    "APPS_IN_TOSS_CERT_PATH",
+    ["glance-invest-mtls.crt", "glance-invest-mTLS_public.crt"],
+)
+APPS_IN_TOSS_KEY_PATH = resolve_secret_file_path(
+    "APPS_IN_TOSS_KEY_PATH",
+    ["glance-invest-mtls.key", "glance-invest-mTLS_private.key"],
+)
 TOSS_SMART_MESSAGE_BASE_URL = (os.getenv("TOSS_SMART_MESSAGE_BASE_URL") or "https://apps-in-toss-api.toss.im").rstrip("/")
 TOSS_SMART_MESSAGE_TEMPLATE_CODE = (os.getenv("TOSS_SMART_MESSAGE_TEMPLATE_CODE") or "glance-invest-reminder").strip() or "glance-invest-reminder"
 MARKET_TIMEZONES = {
@@ -1155,6 +1177,8 @@ def get_toss_smart_message_diagnostics() -> dict[str, Any]:
         "configured": is_toss_smart_message_configured(),
         "cert_path_set": bool(APPS_IN_TOSS_CERT_PATH),
         "key_path_set": bool(APPS_IN_TOSS_KEY_PATH),
+        "cert_env_set": bool((os.getenv("APPS_IN_TOSS_CERT_PATH") or "").strip()),
+        "key_env_set": bool((os.getenv("APPS_IN_TOSS_KEY_PATH") or "").strip()),
         "template_code_set": bool(TOSS_SMART_MESSAGE_TEMPLATE_CODE),
         "cert_file_exists": bool(APPS_IN_TOSS_CERT_PATH) and os.path.exists(APPS_IN_TOSS_CERT_PATH),
         "key_file_exists": bool(APPS_IN_TOSS_KEY_PATH) and os.path.exists(APPS_IN_TOSS_KEY_PATH),
