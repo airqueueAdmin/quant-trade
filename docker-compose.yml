@@ -12,9 +12,14 @@ services:
       SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-}
       SUPABASE_DB_SCHEMA: ${SUPABASE_DB_SCHEMA:-public}
       APPS_IN_TOSS_APP_NAME: ${APPS_IN_TOSS_APP_NAME:-glance-invest}
+      APPS_IN_TOSS_CERT_PATH: /certs/glance-invest-mTLS_public.crt
+      APPS_IN_TOSS_KEY_PATH: /certs/glance-invest-mTLS_private.key
+      TOSS_SMART_MESSAGE_BASE_URL: ${TOSS_SMART_MESSAGE_BASE_URL:-https://apps-in-toss-api.toss.im}
+      TOSS_SMART_MESSAGE_TEMPLATE_CODE: ${TOSS_SMART_MESSAGE_TEMPLATE_CODE:-glance-invest-reminder}
       CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-http://localhost:4173,http://127.0.0.1:4173,http://localhost:5173,http://127.0.0.1:5173}
     volumes:
       - ./backend:/app
+      - ./mTLS:/certs:ro
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=5).read()"]
       interval: 15s
