@@ -31,6 +31,8 @@ const KRX_EXCHANGE_OPTIONS: Array<{ value: KrxExchange; label: string }> = [
   { value: 'kosdaq', label: 'KOSDAQ' },
 ] as const
 
+const DEFAULT_TOSS_TEMPLATE_CODE = 'glance-invest-reminder'
+
 const COMMON_KRX_COMPANIES: KRXSearchResult[] = [
   { name: '삼성전자', ticker: '005930', krx_exchange: 'kospi', display_name: '삼성전자 (005930, KOSPI)' },
   { name: 'SK하이닉스', ticker: '000660', krx_exchange: 'kospi', display_name: 'SK하이닉스 (000660, KOSPI)' },
@@ -508,6 +510,7 @@ export function ClosingBetPage() {
   const [notificationDestination, setNotificationDestination] = useState('')
   const [notificationThreshold, setNotificationThreshold] = useState('70')
   const [tossUserKey, setTossUserKey] = useState<string | null>(null)
+  const [notificationTemplateCode, setNotificationTemplateCode] = useState(DEFAULT_TOSS_TEMPLATE_CODE)
   const [notificationAgreementReady, setNotificationAgreementReady] = useState(false)
   const [savingNotification, setSavingNotification] = useState(false)
   const [testingNotification, setTestingNotification] = useState(false)
@@ -574,7 +577,7 @@ export function ClosingBetPage() {
 
     await new Promise<void>((resolve, reject) => {
       requestNotificationAgreement({
-        options: { templateCode: 'glance-invest-reminder' },
+        options: { templateCode: notificationTemplateCode },
         onEvent: (result) => {
           if (result.type === 'agreementRejected') {
             reject(new Error('사용자가 알림 동의를 거부했습니다.'))
@@ -589,6 +592,25 @@ export function ClosingBetPage() {
       })
     })
   }
+
+  useEffect(() => {
+    const abortController = new AbortController()
+
+    async function loadAppConfig() {
+      try {
+        const response = await apiClient.appConfig(abortController.signal)
+        const nextTemplateCode = response.toss_smart_message?.template_code?.trim()
+        if (!abortController.signal.aborted && nextTemplateCode) {
+          setNotificationTemplateCode(nextTemplateCode)
+        }
+      } catch {
+        // Keep the local fallback when app config cannot be fetched.
+      }
+    }
+
+    void loadAppConfig()
+    return () => abortController.abort()
+  }, [])
 
   useEffect(() => {
     const abortController = new AbortController()

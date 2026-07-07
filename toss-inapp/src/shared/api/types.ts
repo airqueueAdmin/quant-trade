@@ -19,6 +19,11 @@ export type AppConfig = {
     paper_trading: AppFeatureStatus
     strategy_simulation: AppFeatureStatus
   }
+  toss_smart_message: {
+    configured: boolean
+    app_name?: string | null
+    template_code?: string | null
+  }
 }
 
 export type SessionBootstrapResponse = {

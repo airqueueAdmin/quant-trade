@@ -1197,6 +1197,7 @@ def get_toss_smart_message_diagnostics() -> dict[str, Any]:
 
     return {
         "configured": is_toss_smart_message_configured(),
+        "app_name": APPS_IN_TOSS_APP_NAME or None,
         "cert_path_set": bool(APPS_IN_TOSS_CERT_PATH),
         "key_path_set": bool(APPS_IN_TOSS_KEY_PATH),
         "cert_env_set": bool((os.getenv("APPS_IN_TOSS_CERT_PATH") or "").strip()),
@@ -1214,6 +1215,20 @@ def get_toss_smart_message_diagnostics() -> dict[str, Any]:
         "secrets_dir_files": safe_dir_listing("/etc/secrets"),
         "cwd_files": safe_dir_listing(os.getcwd()),
     }
+
+
+def format_toss_smart_message_failure_detail(error: dict[str, Any]) -> str:
+    error_code = str(error.get("errorCode") or "UNKNOWN")
+    reason = str(error.get("reason") or "요청에 실패했습니다.")
+    detail = f"Toss 스마트 발송 실패: {error_code} / {reason}"
+    if error_code == "4010":
+        detail = (
+            f"{detail} "
+            f"(app={APPS_IN_TOSS_APP_NAME}, template={TOSS_SMART_MESSAGE_TEMPLATE_CODE}; "
+            "확인: Toss 앱 안에서 연 배포본인지, 알림 동의 템플릿과 발송 템플릿이 같은지, "
+            "getAnonymousKey()로 받은 최신 user key인지, 현재 mTLS 인증서가 이 앱에 연결된 인증서인지)"
+        )
+    return detail
 
 
 def build_toss_smart_message_context(evaluation: dict[str, Any]) -> dict[str, Any]:
@@ -1266,7 +1281,7 @@ def call_toss_smart_message_api(
         error = result.get("error") or {}
         raise HTTPException(
             status_code=503,
-            detail=f"Toss 스마트 발송 실패: {error.get('errorCode', 'UNKNOWN')} / {error.get('reason', '요청에 실패했습니다.')}",
+            detail=format_toss_smart_message_failure_detail(error),
         )
     return result
 
