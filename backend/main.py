@@ -1150,6 +1150,20 @@ def is_toss_smart_message_configured() -> bool:
     return bool(APPS_IN_TOSS_CERT_PATH and APPS_IN_TOSS_KEY_PATH and TOSS_SMART_MESSAGE_TEMPLATE_CODE)
 
 
+def get_toss_smart_message_diagnostics() -> dict[str, Any]:
+    return {
+        "configured": is_toss_smart_message_configured(),
+        "cert_path_set": bool(APPS_IN_TOSS_CERT_PATH),
+        "key_path_set": bool(APPS_IN_TOSS_KEY_PATH),
+        "template_code_set": bool(TOSS_SMART_MESSAGE_TEMPLATE_CODE),
+        "cert_file_exists": bool(APPS_IN_TOSS_CERT_PATH) and os.path.exists(APPS_IN_TOSS_CERT_PATH),
+        "key_file_exists": bool(APPS_IN_TOSS_KEY_PATH) and os.path.exists(APPS_IN_TOSS_KEY_PATH),
+        "cert_path_basename": os.path.basename(APPS_IN_TOSS_CERT_PATH) if APPS_IN_TOSS_CERT_PATH else None,
+        "key_path_basename": os.path.basename(APPS_IN_TOSS_KEY_PATH) if APPS_IN_TOSS_KEY_PATH else None,
+        "template_code": TOSS_SMART_MESSAGE_TEMPLATE_CODE or None,
+    }
+
+
 def build_toss_smart_message_context(evaluation: dict[str, Any]) -> dict[str, Any]:
     return {
         "ticker": str(evaluation.get("resolved_ticker") or evaluation.get("ticker") or ""),
@@ -2057,6 +2071,7 @@ def app_config() -> dict[str, Any]:
         "auth_mode": "session_account",
         "cors_allowed_origins": parse_allowed_origins(CORS_ALLOW_ORIGINS),
         "features": build_feature_status(),
+        "toss_smart_message": get_toss_smart_message_diagnostics(),
     }
 
 
