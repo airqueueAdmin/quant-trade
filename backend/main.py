@@ -145,6 +145,16 @@ APPS_IN_TOSS_KEY_PATH = resolve_secret_file_path(
 )
 TOSS_SMART_MESSAGE_BASE_URL = (os.getenv("TOSS_SMART_MESSAGE_BASE_URL") or "https://apps-in-toss-api.toss.im").rstrip("/")
 TOSS_SMART_MESSAGE_TEMPLATE_CODE = (os.getenv("TOSS_SMART_MESSAGE_TEMPLATE_CODE") or "glance-invest-reminder").strip() or "glance-invest-reminder"
+TOSS_LOGIN_TOKEN_URL = (os.getenv("TOSS_LOGIN_TOKEN_URL") or "").strip()
+TOSS_LOGIN_SANDBOX_TOKEN_URL = (os.getenv("TOSS_LOGIN_SANDBOX_TOKEN_URL") or "").strip()
+TOSS_LOGIN_CLIENT_ID = (os.getenv("TOSS_LOGIN_CLIENT_ID") or "").strip()
+TOSS_LOGIN_CLIENT_SECRET = (os.getenv("TOSS_LOGIN_CLIENT_SECRET") or "").strip()
+TOSS_LOGIN_REDIRECT_URI = (os.getenv("TOSS_LOGIN_REDIRECT_URI") or "").strip()
+TOSS_LOGIN_TOKEN_AUTH_METHOD = (os.getenv("TOSS_LOGIN_TOKEN_AUTH_METHOD") or "body").strip().lower() or "body"
+TOSS_LOGIN_ME_URL = (
+    os.getenv("TOSS_LOGIN_ME_URL")
+    or f"{TOSS_SMART_MESSAGE_BASE_URL}/api-partner/v1/apps-in-toss/user/oauth2/login-me"
+).strip()
 APPS_IN_TOSS_CERT_SHA256 = file_sha256(APPS_IN_TOSS_CERT_PATH)
 APPS_IN_TOSS_CERT_FINGERPRINT_SHA256 = certificate_fingerprint_sha256(APPS_IN_TOSS_CERT_PATH)
 MARKET_TIMEZONES = {
@@ -545,6 +555,29 @@ class ClosingBetNotificationTestRequest(PaperTradingAccountRequest):
         return self
 
 
+class TossLoginExchangeRequest(BaseModel):
+    authorization_code: str = Field(min_length=8, max_length=4096)
+    referrer: str | None = Field(default=None, min_length=3, max_length=16)
+
+    @field_validator("authorization_code")
+    @classmethod
+    def validate_authorization_code(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("authorization_code is required")
+        return normalized
+
+    @field_validator("referrer")
+    @classmethod
+    def validate_referrer(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip().upper()
+        if normalized not in {"DEFAULT", "SANDBOX"}:
+            raise ValueError("referrer must be 'DEFAULT' or 'SANDBOX'")
+        return normalized
+
+
 def normalize_paper_account_id(value: str) -> str:
     normalized = value.strip()
     if not normalized:
@@ -721,6 +754,28 @@ def parse_supabase_error(response: requests.Response) -> str:
     payload = extract_supabase_error(response)
     if payload:
         return str(payload.get("message") or payload.get("error_description") or payload.get("hint") or payload)
+    return response.text or f"HTTP {response.status_code}"
+
+
+def extract_response_payload(response: requests.Response) -> Any:
+    try:
+        return response.json()
+    except Exception:
+        return None
+
+
+def parse_external_api_error(response: requests.Response) -> str:
+    payload = extract_response_payload(response)
+    if isinstance(payload, dict):
+        return str(
+            payload.get("message")
+            or payload.get("error_description")
+            or payload.get("reason")
+            or payload.get("error")
+            or payload
+        )
+    if payload is not None:
+        return str(payload)
     return response.text or f"HTTP {response.status_code}"
 
 
@@ -1228,8 +1283,25 @@ def is_email_configured() -> bool:
     return bool(SMTP_HOST and SMTP_FROM_EMAIL)
 
 
+def is_toss_login_configured() -> bool:
+    return bool(TOSS_LOGIN_TOKEN_URL and TOSS_LOGIN_CLIENT_ID and TOSS_LOGIN_CLIENT_SECRET)
+
+
 def is_toss_smart_message_configured() -> bool:
     return bool(APPS_IN_TOSS_CERT_PATH and APPS_IN_TOSS_KEY_PATH and TOSS_SMART_MESSAGE_TEMPLATE_CODE)
+
+
+def get_toss_login_diagnostics() -> dict[str, Any]:
+    return {
+        "configured": is_toss_login_configured(),
+        "token_url_set": bool(TOSS_LOGIN_TOKEN_URL),
+        "sandbox_token_url_set": bool(TOSS_LOGIN_SANDBOX_TOKEN_URL),
+        "client_id_set": bool(TOSS_LOGIN_CLIENT_ID),
+        "client_secret_set": bool(TOSS_LOGIN_CLIENT_SECRET),
+        "redirect_uri_set": bool(TOSS_LOGIN_REDIRECT_URI),
+        "token_auth_method": TOSS_LOGIN_TOKEN_AUTH_METHOD or "body",
+        "me_url": TOSS_LOGIN_ME_URL or None,
+    }
 
 
 def get_toss_smart_message_diagnostics() -> dict[str, Any]:
@@ -1275,6 +1347,107 @@ def format_toss_smart_message_failure_detail(error: dict[str, Any]) -> str:
             "getAnonymousKey()로 받은 최신 user key인지, 현재 mTLS 인증서가 이 앱에 연결된 인증서인지)"
         )
     return detail
+
+
+def resolve_toss_login_token_url(referrer: str | None = None) -> str:
+    if referrer == "SANDBOX" and TOSS_LOGIN_SANDBOX_TOKEN_URL:
+        return TOSS_LOGIN_SANDBOX_TOKEN_URL
+    return TOSS_LOGIN_TOKEN_URL
+
+
+def build_toss_login_token_headers() -> dict[str, str]:
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/x-www-form-urlencoded",
+    }
+    if TOSS_LOGIN_TOKEN_AUTH_METHOD == "basic":
+        token = base64.b64encode(f"{TOSS_LOGIN_CLIENT_ID}:{TOSS_LOGIN_CLIENT_SECRET}".encode("utf-8")).decode("ascii")
+        headers["Authorization"] = f"Basic {token}"
+    return headers
+
+
+def exchange_toss_login_authorization_code(authorization_code: str, referrer: str | None = None) -> dict[str, Any]:
+    if not is_toss_login_configured():
+        raise HTTPException(status_code=503, detail="토스 로그인 연동 설정이 없어 userKey를 조회할 수 없습니다.")
+
+    token_url = resolve_toss_login_token_url(referrer)
+    if not token_url:
+        raise HTTPException(status_code=503, detail="토스 로그인 토큰 URL 설정이 없어 userKey를 조회할 수 없습니다.")
+
+    payload = {
+        "grant_type": "authorization_code",
+        "code": authorization_code,
+    }
+    if TOSS_LOGIN_REDIRECT_URI:
+        payload["redirect_uri"] = TOSS_LOGIN_REDIRECT_URI
+    if TOSS_LOGIN_TOKEN_AUTH_METHOD != "basic":
+        payload["client_id"] = TOSS_LOGIN_CLIENT_ID
+        payload["client_secret"] = TOSS_LOGIN_CLIENT_SECRET
+
+    response = requests.post(
+        token_url,
+        headers=build_toss_login_token_headers(),
+        data=payload,
+        timeout=20,
+    )
+    if response.status_code >= 400:
+        detail = parse_external_api_error(response)
+        raise HTTPException(status_code=503, detail=f"토스 로그인 토큰 교환에 실패했습니다: {detail}")
+
+    result = extract_response_payload(response)
+    if not isinstance(result, dict):
+        raise HTTPException(status_code=503, detail="토스 로그인 토큰 응답을 해석하지 못했습니다.")
+    return result
+
+
+def fetch_toss_login_user_key(access_token: str) -> dict[str, Any]:
+    response = requests.get(
+        TOSS_LOGIN_ME_URL,
+        headers={
+            "Accept": "application/json",
+            "Authorization": f"Bearer {access_token}",
+        },
+        timeout=20,
+    )
+    if response.status_code >= 400:
+        detail = parse_external_api_error(response)
+        raise HTTPException(status_code=503, detail=f"토스 로그인 사용자 조회에 실패했습니다: {detail}")
+
+    result = extract_response_payload(response)
+    if not isinstance(result, dict):
+        raise HTTPException(status_code=503, detail="토스 로그인 사용자 조회 응답을 해석하지 못했습니다.")
+    if result.get("resultType") == "FAIL":
+        error = result.get("error") or {}
+        raise HTTPException(
+            status_code=503,
+            detail=f"토스 로그인 사용자 조회 실패: {error.get('errorCode', 'UNKNOWN')} / {error.get('reason', '요청에 실패했습니다.')}",
+        )
+
+    success = result.get("success") or {}
+    user_key = success.get("userKey")
+    if user_key in {None, ""}:
+        raise HTTPException(status_code=503, detail="토스 로그인 사용자 조회 응답에 userKey가 없습니다.")
+
+    scope = str(success.get("scope") or "")
+    scope_list = [item.strip() for item in scope.split(",") if item and item.strip()]
+    return {
+        "user_key": str(user_key),
+        "scope": scope,
+        "scope_list": scope_list,
+    }
+
+
+def resolve_toss_login_user_key(authorization_code: str, referrer: str | None = None) -> dict[str, Any]:
+    token_result = exchange_toss_login_authorization_code(authorization_code, referrer)
+    access_token = str(token_result.get("access_token") or token_result.get("accessToken") or "")
+    if not access_token:
+        raise HTTPException(status_code=503, detail="토스 로그인 토큰 응답에 access_token이 없습니다.")
+
+    user_result = fetch_toss_login_user_key(access_token)
+    return {
+        **user_result,
+        "referrer": referrer or "DEFAULT",
+    }
 
 
 def build_toss_smart_message_context(evaluation: dict[str, Any]) -> dict[str, Any]:
@@ -2255,8 +2428,14 @@ def app_config() -> dict[str, Any]:
         "auth_mode": "session_account",
         "cors_allowed_origins": parse_allowed_origins(CORS_ALLOW_ORIGINS),
         "features": build_feature_status(),
+        "toss_login": get_toss_login_diagnostics(),
         "toss_smart_message": get_toss_smart_message_diagnostics(),
     }
+
+
+@app.post("/toss-login/user-key")
+def toss_login_user_key(request: TossLoginExchangeRequest) -> dict[str, Any]:
+    return normalize_value(resolve_toss_login_user_key(request.authorization_code, request.referrer))
 
 
 @app.post("/session/bootstrap")

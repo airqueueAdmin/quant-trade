@@ -16,6 +16,13 @@ services:
       APPS_IN_TOSS_KEY_PATH: /certs/glance-invest-mTLS_private.key
       TOSS_SMART_MESSAGE_BASE_URL: ${TOSS_SMART_MESSAGE_BASE_URL:-https://apps-in-toss-api.toss.im}
       TOSS_SMART_MESSAGE_TEMPLATE_CODE: ${TOSS_SMART_MESSAGE_TEMPLATE_CODE:-glance-invest-reminder}
+      TOSS_LOGIN_TOKEN_URL: ${TOSS_LOGIN_TOKEN_URL:-}
+      TOSS_LOGIN_SANDBOX_TOKEN_URL: ${TOSS_LOGIN_SANDBOX_TOKEN_URL:-}
+      TOSS_LOGIN_CLIENT_ID: ${TOSS_LOGIN_CLIENT_ID:-}
+      TOSS_LOGIN_CLIENT_SECRET: ${TOSS_LOGIN_CLIENT_SECRET:-}
+      TOSS_LOGIN_REDIRECT_URI: ${TOSS_LOGIN_REDIRECT_URI:-}
+      TOSS_LOGIN_TOKEN_AUTH_METHOD: ${TOSS_LOGIN_TOKEN_AUTH_METHOD:-body}
+      TOSS_LOGIN_ME_URL: ${TOSS_LOGIN_ME_URL:-https://apps-in-toss-api.toss.im/api-partner/v1/apps-in-toss/user/oauth2/login-me}
       CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-http://localhost:4173,http://127.0.0.1:4173,http://localhost:5173,http://127.0.0.1:5173}
     volumes:
       - ./backend:/app

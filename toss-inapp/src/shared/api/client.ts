@@ -23,6 +23,7 @@ import type {
   SessionBootstrapResponse,
   StockHistoryRow,
   SentimentResult,
+  TossLoginUserKeyResponse,
 } from './types'
 
 export const apiClient = {
@@ -32,6 +33,17 @@ export const apiClient = {
 
   appConfig(signal?: AbortSignal) {
     return apiRequest<AppConfig>('/app-config', { signal })
+  },
+
+  tossLoginUserKey(payload: {
+    authorization_code: string
+    referrer?: 'DEFAULT' | 'SANDBOX'
+  }, sessionToken?: string) {
+    return apiRequest<TossLoginUserKeyResponse>('/toss-login/user-key', {
+      method: 'POST',
+      body: payload,
+      headers: sessionToken ? { 'X-App-Session': sessionToken } : undefined,
+    })
   },
 
   bootstrapSession(sessionToken?: string) {

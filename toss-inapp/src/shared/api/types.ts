@@ -19,11 +19,28 @@ export type AppConfig = {
     paper_trading: AppFeatureStatus
     strategy_simulation: AppFeatureStatus
   }
+  toss_login: {
+    configured: boolean
+    token_url_set?: boolean
+    sandbox_token_url_set?: boolean
+    client_id_set?: boolean
+    client_secret_set?: boolean
+    redirect_uri_set?: boolean
+    token_auth_method?: string | null
+    me_url?: string | null
+  }
   toss_smart_message: {
     configured: boolean
     app_name?: string | null
     template_code?: string | null
   }
+}
+
+export type TossLoginUserKeyResponse = {
+  user_key: string
+  scope: string
+  scope_list: string[]
+  referrer: 'DEFAULT' | 'SANDBOX'
 }
 
 export type SessionBootstrapResponse = {
