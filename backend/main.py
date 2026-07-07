@@ -7,6 +7,7 @@ import hmac
 import os
 import secrets
 import smtplib
+import tempfile
 from typing import Any, Iterable
 import json
 from zoneinfo import ZoneInfo
@@ -39,8 +40,23 @@ from strategies.rsi import rsi_strategy
 load_dotenv()
 
 
+def write_secret_pem_file(secret_value: str, filename: str) -> str:
+    target_path = os.path.join(tempfile.gettempdir(), filename)
+    with open(target_path, "w", encoding="utf-8") as file_obj:
+        file_obj.write(secret_value.strip() + "\n")
+    return target_path
+
+
 def resolve_secret_file_path(env_var_name: str, fallback_filenames: list[str]) -> str:
     configured_path = (os.getenv(env_var_name) or "").strip()
+    pem_env_name = f"{env_var_name}_PEM"
+    pem_value = (os.getenv(pem_env_name) or "").strip()
+
+    if pem_value.startswith("-----BEGIN "):
+        return write_secret_pem_file(pem_value, fallback_filenames[0])
+    if configured_path.startswith("-----BEGIN "):
+        return write_secret_pem_file(configured_path, fallback_filenames[0])
+
     candidates: list[str] = []
     if configured_path:
         candidates.append(configured_path)
@@ -1185,6 +1201,8 @@ def get_toss_smart_message_diagnostics() -> dict[str, Any]:
         "key_path_set": bool(APPS_IN_TOSS_KEY_PATH),
         "cert_env_set": bool((os.getenv("APPS_IN_TOSS_CERT_PATH") or "").strip()),
         "key_env_set": bool((os.getenv("APPS_IN_TOSS_KEY_PATH") or "").strip()),
+        "cert_pem_env_set": bool((os.getenv("APPS_IN_TOSS_CERT_PATH_PEM") or "").strip()),
+        "key_pem_env_set": bool((os.getenv("APPS_IN_TOSS_KEY_PATH_PEM") or "").strip()),
         "template_code_set": bool(TOSS_SMART_MESSAGE_TEMPLATE_CODE),
         "cert_file_exists": bool(APPS_IN_TOSS_CERT_PATH) and os.path.exists(APPS_IN_TOSS_CERT_PATH),
         "key_file_exists": bool(APPS_IN_TOSS_KEY_PATH) and os.path.exists(APPS_IN_TOSS_KEY_PATH),
