@@ -8,6 +8,7 @@ import logging
 import os
 import secrets
 import smtplib
+import ssl
 import tempfile
 from typing import Any, Iterable
 import json
@@ -83,6 +84,23 @@ def file_sha256(path: str | None) -> str | None:
     return digest.hexdigest()
 
 
+def certificate_fingerprint_sha256(path: str | None) -> str | None:
+    if not path or not os.path.exists(path):
+        return None
+
+    with open(path, "r", encoding="utf-8") as file_obj:
+        cert_text = file_obj.read().strip()
+
+    if not cert_text:
+        return None
+
+    try:
+        der_bytes = ssl.PEM_cert_to_DER_cert(cert_text)
+    except ValueError:
+        return None
+    return hashlib.sha256(der_bytes).hexdigest()
+
+
 def mask_toss_user_key(value: str | None) -> str | None:
     if value is None:
         return None
@@ -128,6 +146,7 @@ APPS_IN_TOSS_KEY_PATH = resolve_secret_file_path(
 TOSS_SMART_MESSAGE_BASE_URL = (os.getenv("TOSS_SMART_MESSAGE_BASE_URL") or "https://apps-in-toss-api.toss.im").rstrip("/")
 TOSS_SMART_MESSAGE_TEMPLATE_CODE = (os.getenv("TOSS_SMART_MESSAGE_TEMPLATE_CODE") or "glance-invest-reminder").strip() or "glance-invest-reminder"
 APPS_IN_TOSS_CERT_SHA256 = file_sha256(APPS_IN_TOSS_CERT_PATH)
+APPS_IN_TOSS_CERT_FINGERPRINT_SHA256 = certificate_fingerprint_sha256(APPS_IN_TOSS_CERT_PATH)
 MARKET_TIMEZONES = {
     "krx": ZoneInfo("Asia/Seoul"),
     "us": ZoneInfo("America/New_York"),
@@ -1235,6 +1254,8 @@ def get_toss_smart_message_diagnostics() -> dict[str, Any]:
         "cert_path_basename": os.path.basename(APPS_IN_TOSS_CERT_PATH) if APPS_IN_TOSS_CERT_PATH else None,
         "key_path_basename": os.path.basename(APPS_IN_TOSS_KEY_PATH) if APPS_IN_TOSS_KEY_PATH else None,
         "template_code": TOSS_SMART_MESSAGE_TEMPLATE_CODE or None,
+        "cert_sha256": APPS_IN_TOSS_CERT_SHA256,
+        "cert_fingerprint_sha256": APPS_IN_TOSS_CERT_FINGERPRINT_SHA256,
         "cwd": os.getcwd(),
         "secrets_dir_exists": os.path.isdir("/etc/secrets"),
         "secrets_dir_files": safe_dir_listing("/etc/secrets"),
@@ -1293,6 +1314,7 @@ def call_toss_smart_message_api(
         deployment_id=deployment_id,
         masked_user_key=masked_user_key,
         cert_sha256=APPS_IN_TOSS_CERT_SHA256,
+        cert_fingerprint_sha256=APPS_IN_TOSS_CERT_FINGERPRINT_SHA256,
     )
 
     response = requests.post(
@@ -1320,6 +1342,7 @@ def call_toss_smart_message_api(
             deployment_id=deployment_id,
             masked_user_key=masked_user_key,
             cert_sha256=APPS_IN_TOSS_CERT_SHA256,
+            cert_fingerprint_sha256=APPS_IN_TOSS_CERT_FINGERPRINT_SHA256,
             status_code=response.status_code,
             response_detail=detail[:500],
         )
@@ -1340,6 +1363,7 @@ def call_toss_smart_message_api(
             deployment_id=deployment_id,
             masked_user_key=masked_user_key,
             cert_sha256=APPS_IN_TOSS_CERT_SHA256,
+            cert_fingerprint_sha256=APPS_IN_TOSS_CERT_FINGERPRINT_SHA256,
             error_code=error.get("errorCode"),
             reason=error.get("reason"),
         )
@@ -1355,6 +1379,7 @@ def call_toss_smart_message_api(
         deployment_id=deployment_id,
         masked_user_key=masked_user_key,
         cert_sha256=APPS_IN_TOSS_CERT_SHA256,
+        cert_fingerprint_sha256=APPS_IN_TOSS_CERT_FINGERPRINT_SHA256,
         result_type=result.get("resultType"),
     )
     return result
