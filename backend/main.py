@@ -1296,6 +1296,20 @@ def create_toss_inapp_alert_event(
     payload: dict[str, Any],
     notification_id: int | None = None,
 ) -> dict[str, Any]:
+    if not is_supabase_configured():
+        return {
+            "account_id": account_id,
+            "notification_id": notification_id,
+            "delivered_channel": "toss_inapp",
+            "title": subject,
+            "message": f"{destination}\n{message}" if destination else message,
+            "ticker": payload.get("resolved_ticker") or payload.get("ticker") or "-",
+            "market": payload.get("market") or "krx",
+            "signal_date": payload.get("signal_date"),
+            "total_score": payload.get("total_score"),
+            "created_at": datetime.utcnow().isoformat(),
+            "persisted": False,
+        }
     rows = call_supabase(
         "POST",
         "/rest/v1/closing_bet_alert_events",
@@ -1409,6 +1423,8 @@ def ensure_notification_dispatch_token(x_dispatch_token: str | None) -> None:
 
 
 def list_closing_bet_notifications(account_id: str) -> list[dict[str, Any]]:
+    if not is_supabase_configured():
+        return []
     ensure_paper_account(account_id)
     rows = call_supabase(
         "GET",
@@ -1423,6 +1439,8 @@ def list_closing_bet_notifications(account_id: str) -> list[dict[str, Any]]:
 
 
 def list_closing_bet_alert_events(account_id: str) -> list[dict[str, Any]]:
+    if not is_supabase_configured():
+        return []
     ensure_paper_account(account_id)
     rows = call_supabase(
         "GET",
