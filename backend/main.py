@@ -43,10 +43,18 @@ load_dotenv()
 logger = logging.getLogger("quant.toss")
 
 
+def normalize_multiline_secret(raw_value: str) -> str:
+    normalized = raw_value.strip()
+    if len(normalized) >= 2 and normalized[0] == normalized[-1] and normalized[0] in {'"', "'"}:
+        normalized = normalized[1:-1].strip()
+    return normalized.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\r", "\n")
+
+
 def write_secret_pem_file(secret_value: str, filename: str) -> str:
     target_path = os.path.join(tempfile.gettempdir(), filename)
+    normalized_secret = normalize_multiline_secret(secret_value)
     with open(target_path, "w", encoding="utf-8") as file_obj:
-        file_obj.write(secret_value.strip() + "\n")
+        file_obj.write(normalized_secret.rstrip() + "\n")
     return target_path
 
 
@@ -54,15 +62,17 @@ def resolve_secret_file_path(env_var_name: str, fallback_filenames: list[str]) -
     configured_path = (os.getenv(env_var_name) or "").strip()
     pem_env_name = f"{env_var_name}_PEM"
     pem_value = (os.getenv(pem_env_name) or "").strip()
+    normalized_configured_path = normalize_multiline_secret(configured_path) if configured_path else ""
+    normalized_pem_value = normalize_multiline_secret(pem_value) if pem_value else ""
 
-    if pem_value.startswith("-----BEGIN "):
-        return write_secret_pem_file(pem_value, fallback_filenames[0])
-    if configured_path.startswith("-----BEGIN "):
-        return write_secret_pem_file(configured_path, fallback_filenames[0])
+    if normalized_pem_value.startswith("-----BEGIN "):
+        return write_secret_pem_file(normalized_pem_value, fallback_filenames[0])
+    if normalized_configured_path.startswith("-----BEGIN "):
+        return write_secret_pem_file(normalized_configured_path, fallback_filenames[0])
 
     candidates: list[str] = []
-    if configured_path:
-        candidates.append(configured_path)
+    if normalized_configured_path:
+        candidates.append(normalized_configured_path)
     for filename in fallback_filenames:
         candidates.append(os.path.join("/etc/secrets", filename))
         candidates.append(filename)
@@ -70,7 +80,7 @@ def resolve_secret_file_path(env_var_name: str, fallback_filenames: list[str]) -
     for candidate in candidates:
         if candidate and os.path.exists(candidate):
             return candidate
-    return configured_path
+    return normalized_configured_path
 
 
 def file_sha256(path: str | None) -> str | None:
