@@ -1236,7 +1236,7 @@ export function ClosingBetPage() {
                 <strong className="summary-card__value">{tossUserKey ? '연결됨' : '연결 필요'}</strong>
                 <p className="summary-card__text">
                   {tossLoginConfigured === false
-                    ? '백엔드에 토스 로그인 토큰 교환 설정이 없어 userKey를 가져올 수 없습니다.'
+                    ? '백엔드에 Apps in Toss mTLS 인증서 설정이 없어 userKey를 가져올 수 없습니다.'
                     : tossUserKey
                       ? `현재 스마트 발송용 userKey를 확보했습니다. scope: ${tossLoginScope.join(', ') || '미확인'}`
                       : '현재는 토스 로그인 userKey가 필요합니다. 추후 anon-key 발송 지원 시 이 단계는 단순화될 수 있습니다.'}

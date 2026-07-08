@@ -21,13 +21,13 @@ export type AppConfig = {
   }
   toss_login: {
     configured: boolean
-    token_url_set?: boolean
-    sandbox_token_url_set?: boolean
-    client_id_set?: boolean
-    client_secret_set?: boolean
-    redirect_uri_set?: boolean
-    token_auth_method?: string | null
+    base_url?: string | null
+    generate_token_url?: string | null
     me_url?: string | null
+    cert_path_set?: boolean
+    key_path_set?: boolean
+    cert_file_exists?: boolean
+    key_file_exists?: boolean
   }
   toss_smart_message: {
     configured: boolean
