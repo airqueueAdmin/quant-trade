@@ -1238,8 +1238,8 @@ export function ClosingBetPage() {
                   {tossLoginConfigured === false
                     ? '백엔드에 토스 로그인 토큰 교환 설정이 없어 userKey를 가져올 수 없습니다.'
                     : tossUserKey
-                      ? `스마트 발송용 userKey를 확보했습니다. scope: ${tossLoginScope.join(', ') || '미확인'}`
-                      : '토스 로그인으로 userKey를 받아야 스마트 발송을 테스트할 수 있습니다.'}
+                      ? `현재 스마트 발송용 userKey를 확보했습니다. scope: ${tossLoginScope.join(', ') || '미확인'}`
+                      : '현재는 토스 로그인 userKey가 필요합니다. 추후 anon-key 발송 지원 시 이 단계는 단순화될 수 있습니다.'}
                 </p>
                 <div className="input-action-row input-action-row--wide">
                   <button

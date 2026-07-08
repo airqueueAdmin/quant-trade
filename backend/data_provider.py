@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from datetime import datetime, time
 from functools import lru_cache
 import io
 from pathlib import Path
 import re
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import requests
@@ -25,6 +27,18 @@ DEFAULT_REQUEST_HEADERS = {
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36"
     ),
     "Referer": "https://kind.krx.co.kr/corpgeneral/corpList.do?method=loadInitPage",
+}
+MARKET_TIMEZONES = {
+    "krx": ZoneInfo("Asia/Seoul"),
+    "us": ZoneInfo("America/New_York"),
+}
+MARKET_OPEN_TIMES = {
+    "krx": time(hour=9, minute=0),
+    "us": time(hour=9, minute=30),
+}
+MARKET_CLOSE_TIMES = {
+    "krx": time(hour=15, minute=30),
+    "us": time(hour=16, minute=0),
 }
 
 
@@ -192,18 +206,33 @@ def _download_symbol(symbol: str, start_date: str, end_date: str) -> pd.DataFram
     return raw_data.copy()
 
 
-@lru_cache(maxsize=128)
-def get_stock_data(
+def resolve_market_data_cache_bucket(market: str) -> str:
+    normalized_market = normalize_market(market)
+    timezone = MARKET_TIMEZONES[normalized_market]
+    market_now = datetime.now(timezone)
+    market_open = datetime.combine(market_now.date(), MARKET_OPEN_TIMES[normalized_market], tzinfo=timezone)
+    market_close = datetime.combine(market_now.date(), MARKET_CLOSE_TIMES[normalized_market], tzinfo=timezone)
+
+    if market_now < market_open:
+        return f"preopen-{normalized_market}-{market_now.date().isoformat()}"
+    if market_open <= market_now < market_close:
+        return f"intraday-{normalized_market}-{market_now.strftime('%Y-%m-%d-%H-%M')}"
+
+    minutes_after_close = int((market_now - market_close).total_seconds() // 60)
+    if 0 <= minutes_after_close < 10:
+        return f"close-window-{normalized_market}-{market_now.strftime('%Y-%m-%d-%H-%M')}"
+    return f"postclose-{normalized_market}-{market_now.date().isoformat()}"
+
+
+@lru_cache(maxsize=512)
+def _get_stock_data_cached(
     ticker: str,
     start_date: str,
     end_date: str,
     market: str = "us",
     krx_exchange: str = "auto",
+    cache_bucket: str = "",
 ) -> pd.DataFrame:
-    """
-    yfinance로부터 주식 데이터를 가져옵니다.
-    국내주식은 6자리 종목코드를 받아 KOSPI/KOSDAQ 심볼로 자동 보정합니다.
-    """
     candidates = build_symbol_candidates(ticker, market=market, krx_exchange=krx_exchange)
     last_frame = pd.DataFrame()
 
@@ -222,6 +251,29 @@ def get_stock_data(
     last_frame.attrs["market"] = normalize_market(market)
     last_frame.attrs["krx_exchange"] = normalize_krx_exchange(krx_exchange)
     return last_frame.copy()
+
+
+def get_stock_data(
+    ticker: str,
+    start_date: str,
+    end_date: str,
+    market: str = "us",
+    krx_exchange: str = "auto",
+) -> pd.DataFrame:
+    """
+    yfinance로부터 주식 데이터를 가져옵니다.
+    국내주식은 6자리 종목코드를 받아 KOSPI/KOSDAQ 심볼로 자동 보정합니다.
+    장중/장마감 직후에는 cache bucket을 짧게 잡아 누적수익률과 최근 종가 갱신이 늦지 않게 합니다.
+    """
+    cache_bucket = resolve_market_data_cache_bucket(market)
+    return _get_stock_data_cached(
+        ticker,
+        start_date,
+        end_date,
+        market=market,
+        krx_exchange=krx_exchange,
+        cache_bucket=cache_bucket,
+    )
 
 
 @lru_cache(maxsize=64)

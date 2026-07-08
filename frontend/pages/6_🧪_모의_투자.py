@@ -1,8 +1,11 @@
 import os
+from datetime import datetime, time
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import requests
 import streamlit as st
+import streamlit.components.v1 as components
 
 from ga import inject_google_analytics
 from market_utils import get_common_krx_companies, search_krx_companies
@@ -10,6 +13,9 @@ from ui_helpers import inject_stage_banner_styles, render_stage_banner
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000")
 DEFAULT_ACCOUNT_ID = "paper-demo"
+KRX_TZ = ZoneInfo("Asia/Seoul")
+KRX_OPEN_TIME = time(hour=9, minute=0)
+KRX_CLOSE_TIME = time(hour=15, minute=30)
 
 st.set_page_config(layout="wide", page_title="모의 투자")
 inject_google_analytics(os.getenv("GA_MEASUREMENT_ID") or os.getenv("GA_TAG_ID"), "paper_trading")
@@ -57,6 +63,70 @@ def format_date(value: str | None) -> str:
     return str(value).split("T", 1)[0]
 
 
+def format_reference_price(value: float | None) -> str:
+    if value is None:
+        return "-"
+    return f"{float(value):,.0f}원"
+
+
+def build_saved_plan_templates(saved_plan: dict) -> dict[str, str]:
+    reference_close = format_reference_price(saved_plan.get("reference_close"))
+    reference_low = format_reference_price(saved_plan.get("reference_low"))
+    reference_high = format_reference_price(saved_plan.get("reference_high"))
+    scenario = saved_plan.get("scenario", "-")
+    decision = saved_plan.get("decision", "-")
+
+    if decision == "진입 후보":
+        return {
+            "opening": f"갭상승이면 첫 눌림에서 전일 종가 {reference_close} 위 지지 여부를 확인한다.",
+            "base": f"보합권이면 전일 종가 {reference_close}와 저가 {reference_low} 이탈 여부만 먼저 본다.",
+            "risk": f"전일 저가 {reference_low}를 빠르게 잃으면 계획이 틀린 것으로 보고 정리 우선.",
+            "memo": f"오늘 장 마감 구조는 '{scenario}'였다. 첫 30분에 같은 힘이 이어지는지만 재확인.",
+        }
+    if decision == "보류":
+        return {
+            "opening": f"강하게 떠도 전일 고가 {reference_high} 돌파 뒤 지지 확인 전에는 추격하지 않는다.",
+            "base": f"보합 또는 약보합이면 전일 종가 {reference_close} 회복 속도만 관찰한다.",
+            "risk": f"전일 저가 {reference_low} 부근까지 쉽게 밀리면 후보에서 제외한다.",
+            "memo": f"보류 사유가 장 초반에 해소되는지 확인한다. 장 마감 구조: '{scenario}'.",
+        }
+    return {
+        "opening": "갭상승이 나와도 놓쳤다고 따라붙지 않는다.",
+        "base": f"전일 종가 {reference_close} 부근 반응은 복기 참고용으로만 확인한다.",
+        "risk": f"전일 저가 {reference_low} 이탈 여부를 보며 제외 판단이 맞았는지 복기한다.",
+        "memo": f"제외 사유가 실제로 맞았는지 기록한다. 장 마감 구조: '{scenario}'.",
+    }
+
+
+def market_refresh_interval_seconds(now: datetime | None = None) -> int:
+    current = now.astimezone(KRX_TZ) if now else datetime.now(KRX_TZ)
+    market_open = datetime.combine(current.date(), KRX_OPEN_TIME, tzinfo=KRX_TZ)
+    market_close = datetime.combine(current.date(), KRX_CLOSE_TIME, tzinfo=KRX_TZ)
+    if current.weekday() >= 5:
+        return 0
+    if market_open <= current <= market_close:
+        return 60
+    if 0 <= (current - market_close).total_seconds() <= 600:
+        return 60
+    return 0
+
+
+def enable_auto_refresh(interval_seconds: int) -> None:
+    if interval_seconds <= 0:
+        return
+    components.html(
+        f"""
+        <script>
+        setTimeout(function() {{
+          window.parent.location.reload();
+        }}, {interval_seconds * 1000});
+        </script>
+        """,
+        height=0,
+        width=0,
+    )
+
+
 def render_card(column, label: str, value: str) -> None:
     column.markdown(
         f"""
@@ -84,9 +154,64 @@ st.title("🧪 모의 투자")
 render_stage_banner("4단계", "다음 날 대응 연습", "후보를 고른 뒤 실제 돈을 넣기 전에, 다음 날 어떤 식으로 대응할지 미리 연습하는 메뉴입니다.")
 st.write("종가 기준으로 고른 후보를 다음 날 어떻게 대응할지 연습하는 **대응 점검 서포트 시스템**입니다. 실시간 매매 도구라기보다 종가베팅 아이디어 복기와 대응 점검에 가깝습니다.")
 st.info("이 메뉴는 실제 돈을 넣기 전에 '내가 내일 어떻게 대응할지'를 연습하는 곳입니다. 종가베팅 후보를 정한 뒤 마지막 점검용으로 쓰면 됩니다.")
+refresh_interval_seconds = market_refresh_interval_seconds()
+enable_auto_refresh(refresh_interval_seconds)
+if refresh_interval_seconds:
+    st.caption("장중과 장마감 후 10분 동안은 1분마다 자동 새로고침해 누적수익률과 최근 종가를 다시 계산합니다.")
+
+saved_plan = st.session_state.get("closing_bet_plan")
+if saved_plan:
+    st.subheader("최근 저장한 종가베팅 최종 후보")
+    st.caption(
+        f"{saved_plan.get('company_name') or saved_plan.get('ticker')} / "
+        f"최종 판정 {saved_plan.get('decision')} / "
+        f"실전 판단 점수 {saved_plan.get('practical_score', 0)}"
+    )
+    st.info(saved_plan.get("decision_reason", "저장된 판정 요약이 없습니다."))
+    saved_plan_rows = [
+        {"항목": "자동 점수", "내용": saved_plan.get("auto_score", 0)},
+        {"항목": "수동 보정", "내용": saved_plan.get("manual_adjustment", 0)},
+        {"항목": "장 마감 구조", "내용": saved_plan.get("scenario", "-")},
+        {"항목": "전일 종가", "내용": format_reference_price(saved_plan.get("reference_close"))},
+        {"항목": "전일 저가", "내용": format_reference_price(saved_plan.get("reference_low"))},
+    ]
+    st.dataframe(saved_plan_rows, use_container_width=True, hide_index=True)
+    if saved_plan.get("manual_notes"):
+        st.caption("최종 확인 메모: " + " / ".join(saved_plan.get("manual_notes", [])))
+
+    st.subheader("내일 대응 계획 작성")
+    suggested_plan = build_saved_plan_templates(saved_plan)
+    plan_col1, plan_col2 = st.columns(2)
+    with plan_col1:
+        st.text_area(
+            "갭상승 대응",
+            key="paper_plan_opening",
+            value=suggested_plan["opening"],
+            height=90,
+        )
+        st.text_area(
+            "보합권 대응",
+            key="paper_plan_base",
+            value=suggested_plan["base"],
+            height=90,
+        )
+    with plan_col2:
+        st.text_area(
+            "리스크 기준",
+            key="paper_plan_risk",
+            value=suggested_plan["risk"],
+            height=90,
+        )
+        st.text_area(
+            "추가 메모",
+            key="paper_plan_memo",
+            value=suggested_plan["memo"],
+            height=90,
+        )
+    st.caption("종가베팅 화면에서는 후보만 빠르게 고르고, 긴 대응 시나리오는 여기서 정리하는 흐름으로 분리했습니다.")
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=60, show_spinner=False)
 def get_quote(ticker: str, krx_exchange: str = "auto") -> dict:
     response = requests.get(
         f"{BACKEND_URL}/quote/{ticker}",
@@ -351,6 +476,7 @@ if quote:
             """
             - 국내주식만 지원합니다.
             - 현재가는 최근 종가 기준입니다.
+            - 종가베팅 메뉴에서 저장한 대응 계획을 같이 보면서 다음 날 시나리오를 점검하면 좋습니다.
             - 수수료, 세금, 슬리피지는 아직 반영하지 않습니다.
             - 같은 계좌 ID로 다시 접속하면 이어서 볼 수 있습니다.
             """

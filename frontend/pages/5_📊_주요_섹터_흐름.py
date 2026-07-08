@@ -17,6 +17,7 @@ METRIC_OPTIONS = {
     "3개월 수익률": "3개월",
     "추세 점수": "추세 점수",
 }
+RISING_TREND_LABELS = {"강한 상승 추세", "상승 우위"}
 
 st.set_page_config(layout="wide", page_title="주요 섹터 흐름")
 inject_google_analytics(os.getenv("GA_MEASUREMENT_ID") or os.getenv("GA_TAG_ID"), "sector_flow")
@@ -66,6 +67,17 @@ def get_sector_snapshot(market: str) -> dict:
     return response.json()
 
 
+@st.cache_data(ttl=900, show_spinner=False)
+def get_quote_snapshot(ticker: str, market: str, krx_exchange: str = "auto") -> dict:
+    response = requests.get(
+        f"{BACKEND_URL}/quote/{ticker}",
+        params={"market": market, "krx_exchange": krx_exchange},
+        timeout=20,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
 def format_pct(value: float | None) -> str:
     if value is None:
         return "-"
@@ -76,6 +88,13 @@ def format_as_of_date(value: str | None) -> str:
     if not value:
         return "-"
     return str(value).split("T", 1)[0]
+
+
+def quote_snapshot_or_none(ticker: str, market: str, krx_exchange: str = "auto") -> dict | None:
+    try:
+        return get_quote_snapshot(ticker, market, krx_exchange)
+    except requests.exceptions.RequestException:
+        return None
 
 
 def trend_position_label(flag: bool) -> str:
@@ -97,6 +116,69 @@ def render_sector_card(column, title: str, sector: dict) -> None:
             <p>{sector['trend_label']}</p>
             <p>1개월 {format_pct(sector.get('return_21d_pct'))} / 3개월 {format_pct(sector.get('return_63d_pct'))}</p>
             <p>20일선 {trend_position_label(bool(sector.get('above_20dma')))} / 60일선 {trend_position_label(bool(sector.get('above_60dma')))}</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def build_rising_stock_candidates(sectors: list[dict], market: str) -> list[dict]:
+    candidates: list[dict] = []
+    for sector_rank, sector in enumerate(sectors):
+        if sector.get("trend_label") not in RISING_TREND_LABELS:
+            continue
+        for component_rank, component in enumerate(sector.get("components", [])[:3]):
+            component_market = "krx" if component.get("krx_exchange") else market
+            component_exchange = component.get("krx_exchange", "auto")
+            quote = quote_snapshot_or_none(component["ticker"], component_market, component_exchange)
+            change_pct = float((quote or {}).get("change_pct") or 0.0)
+            candidate_score = (
+                float(sector.get("trend_score") or 0.0) * 4
+                + float(sector.get("return_21d_pct") or 0.0) * 1.2
+                + float(sector.get("return_5d_pct") or 0.0) * 1.8
+                + change_pct * 1.4
+                + max(0, 6 - component_rank * 2)
+                + max(0, 4 - sector_rank)
+            )
+            candidates.append(
+                {
+                    "ticker": component["ticker"],
+                    "name": component["name"],
+                    "market": component_market,
+                    "krx_exchange": component_exchange,
+                    "sector_name": sector["name"],
+                    "sector_trend_label": sector["trend_label"],
+                    "sector_trend_score": float(sector.get("trend_score") or 0.0),
+                    "sector_return_21d_pct": float(sector.get("return_21d_pct") or 0.0),
+                    "change_pct": change_pct,
+                    "close": (quote or {}).get("close"),
+                    "as_of": (quote or {}).get("as_of"),
+                    "score": candidate_score,
+                }
+            )
+
+    deduped: dict[str, dict] = {}
+    for item in sorted(candidates, key=lambda row: row["score"], reverse=True):
+        if item["ticker"] not in deduped:
+            deduped[item["ticker"]] = item
+    return list(deduped.values())[:3]
+
+
+def render_stock_pick_card(column, rank: int, stock: dict) -> None:
+    price_text = "-"
+    if stock.get("close") is not None:
+        if stock.get("market") == "krx":
+            price_text = f"{float(stock['close']):,.0f}원"
+        else:
+            price_text = f"${float(stock['close']):,.2f}"
+    column.markdown(
+        f"""
+        <div class="sector-card">
+            <h4>추천 종목 {rank}</h4>
+            <strong>{stock['name']} ({stock['ticker']})</strong>
+            <p>{stock['sector_name']} / {stock['sector_trend_label']}</p>
+            <p>최근 종가 {price_text} / 전일 {format_pct(stock.get('change_pct'))}</p>
+            <p>섹터 1개월 {format_pct(stock.get('sector_return_21d_pct'))} / 추세 점수 {stock.get('sector_trend_score', 0):+.1f}</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -169,11 +251,25 @@ laggards = snapshot.get("laggards", [])
 st.caption(
     f"기준 시점: {format_as_of_date(snapshot.get('as_of'))}"
 )
+if snapshot.get("snapshot_status"):
+    st.caption(f"데이터 성격: {snapshot.get('snapshot_status')}")
+if snapshot.get("intraday_estimate"):
+    st.warning("장중에는 당일 진행 중인 데이터를 잠정 반영합니다. 마감 전에는 순위와 수익률이 바뀔 수 있습니다.")
 st.info(snapshot.get("summary", "요약 정보를 불러오지 못했습니다."))
 
 leader_cols = st.columns(3)
 for index, sector in enumerate(leaders[:3]):
     render_sector_card(leader_cols[index], f"상대 강세 {index + 1}", sector)
+
+stock_picks = build_rising_stock_candidates(sectors, market)
+st.subheader("상승 추세 기준 추천 3종목")
+st.caption("강한 섹터 안에서 대표성, 최근 흐름, 섹터 추세를 같이 반영해 우선 확인할 종목 3개를 추렸습니다.")
+if stock_picks:
+    pick_cols = st.columns(3)
+    for index, stock in enumerate(stock_picks):
+        render_stock_pick_card(pick_cols[index], index + 1, stock)
+else:
+    st.info("뚜렷한 상승 추세 섹터가 부족해 추천 종목을 추리지 못했습니다.")
 
 if laggards:
     weak_col1, weak_col2 = st.columns(2)

@@ -43,6 +43,28 @@ INITIAL_SCORES = {
     "tomorrow_catalyst": 0,
     "risk_control": 0,
 }
+CHECK_OPTIONS = ["긍정", "중립", "부정"]
+CHECK_OPTION_SCORES = {"긍정": 1, "중립": 0, "부정": -1}
+MANUAL_CHECKS = [
+    {
+        "id": "close_hold",
+        "label": "장 막판에도 고가 부근 흐름이 유지됐는가",
+        "help": "3시 20분 이후 눌림이 깊지 않고, 동시호가 전까지 종가 위치가 크게 무너지지 않았는지 직접 확인합니다.",
+        "weight": 6,
+    },
+    {
+        "id": "sector_sync",
+        "label": "대장주와 섹터가 같이 버텼는가",
+        "help": "섹터는 강한데 이 종목만 약한 경우는 제외 우선입니다.",
+        "weight": 4,
+    },
+    {
+        "id": "stop_ready",
+        "label": "틀렸을 때 빨리 접을 가격 기준이 명확한가",
+        "help": "손절 기준이 없으면 자동 점수가 높아도 실전에서는 보류 또는 제외가 맞습니다.",
+        "weight": 7,
+    },
+]
 
 def clamp_score(value: float) -> int:
     return max(0, min(100, round(value)))
@@ -326,6 +348,52 @@ def score_reason(score: int) -> str:
     return "현재 데이터만 보면 수급 지속성보다 소멸 가능성이 더 크게 보입니다."
 
 
+def latest_close_reference(rows: list[dict], quote: dict | None) -> tuple[float | None, float | None, float | None]:
+    if rows:
+        latest = rows[-1]
+        latest_close = float(latest.get("Close") or 0) or None
+        latest_low = float(latest.get("Low") or 0) or latest_close
+        latest_high = float(latest.get("High") or 0) or latest_close
+        return latest_close, latest_low, latest_high
+    if quote:
+        latest_close = float(quote.get("close") or 0) or None
+        return latest_close, latest_close, latest_close
+    return None, None, None
+
+
+def compute_manual_adjustment(manual_checks: dict[str, str]) -> tuple[int, list[str]]:
+    adjustment = 0
+    notes: list[str] = []
+    for item in MANUAL_CHECKS:
+        choice = manual_checks.get(item["id"], "중립")
+        direction = CHECK_OPTION_SCORES.get(choice, 0)
+        adjustment += direction * item["weight"]
+        if choice == "긍정":
+            notes.append(f"{item['label']} 확인")
+        elif choice == "부정":
+            notes.append(f"{item['label']} 미확인")
+    return adjustment, notes
+
+
+def practical_decision(
+    auto_score: int,
+    practical_score: int,
+    manual_checks: dict[str, str],
+) -> tuple[str, str]:
+    close_hold = manual_checks.get("close_hold")
+    stop_ready = manual_checks.get("stop_ready")
+    negative_count = sum(1 for value in manual_checks.values() if value == "부정")
+    positive_count = sum(1 for value in manual_checks.values() if value == "긍정")
+
+    if close_hold == "부정" or stop_ready == "부정":
+        return "제외", "장 막판 유지력 또는 손절 기준이 약해 실전 진입보다는 제외가 맞습니다."
+    if practical_score >= 72 and auto_score >= 60 and positive_count >= 3:
+        return "진입 후보", "자동 점수와 수동 점검이 같이 받쳐줘 동시호가 후보군으로 볼 수 있습니다."
+    if practical_score >= 55 and negative_count <= 2:
+        return "보류", "후보로는 남길 수 있지만 동시호가에 바로 넣기엔 확신이 부족합니다."
+    return "제외", "자동 점수나 수동 점검 중 하나 이상이 약해 관찰이나 복기 쪽이 더 적절합니다."
+
+
 def recent_stock_window() -> tuple[str, str]:
     end_date = date.today() + timedelta(days=1)
     start_date = end_date - timedelta(days=90)
@@ -401,6 +469,8 @@ if "closing_bet_scores" not in st.session_state:
     st.session_state.closing_bet_scores = INITIAL_SCORES.copy()
 if "closing_bet_scenario" not in st.session_state:
     st.session_state.closing_bet_scenario = QUICK_SCENARIOS[1]
+if "closing_bet_manual_checks" not in st.session_state:
+    st.session_state.closing_bet_manual_checks = {item["id"]: "중립" for item in MANUAL_CHECKS}
 
 market = st.radio(
     "시장",
@@ -419,6 +489,7 @@ if st.session_state.get("closing_bet_ticker_market") != market:
     st.session_state.closing_bet_rows = []
     st.session_state.closing_bet_scores = INITIAL_SCORES.copy()
     st.session_state.closing_bet_scenario = QUICK_SCENARIOS[1]
+    st.session_state.closing_bet_manual_checks = {item["id"]: "중립" for item in MANUAL_CHECKS}
 
 krx_exchange = "auto"
 if market == "krx":
@@ -527,6 +598,10 @@ scenario = st.session_state.get("closing_bet_scenario", QUICK_SCENARIOS[1])
 has_analysis = quote is not None or sentiment is not None or snapshot is not None or bool(stock_rows)
 final_score = total_score(scores, scenario) if has_analysis else 0
 risk_flags = derive_risk_flags(stock_rows, matched_sector, sentiment, scenario, scores)
+manual_checks = st.session_state.get("closing_bet_manual_checks", {item["id"]: "중립" for item in MANUAL_CHECKS})
+manual_adjustment, manual_notes = compute_manual_adjustment(manual_checks)
+practical_score = clamp_score(final_score + manual_adjustment) if has_analysis else 0
+decision_label, decision_reason = practical_decision(final_score, practical_score, manual_checks) if has_analysis else ("분석 전", "먼저 자동 보정 결과를 만든 뒤 수동 점검을 진행하세요.")
 
 score_col1, score_col2 = st.columns([1, 1.1])
 with score_col1:
@@ -658,6 +733,60 @@ with st.expander("제외 신호"):
             st.markdown(f"- {item}")
     else:
         st.markdown("- 현재 자동 판정 기준에서는 뚜렷한 제외 신호가 강하게 잡히지 않았습니다.")
+
+st.subheader("3시 20분 전후 수동 체크")
+st.write("여기서는 사용자가 장 막판에 직접 본 흐름을 핵심 3개만 빠르게 체크해 최종 판정을 냅니다.")
+st.caption("목표는 3분 안에 끝나는 최종 확인입니다. 긴 메모와 내일 대응 계획은 모의투자 메뉴에서 정리합니다.")
+
+manual_cols = st.columns(3)
+for index, item in enumerate(MANUAL_CHECKS):
+    target_col = manual_cols[index]
+    current_value = manual_checks.get(item["id"], "중립")
+    next_value = target_col.radio(
+        item["label"],
+        CHECK_OPTIONS,
+        index=CHECK_OPTIONS.index(current_value) if current_value in CHECK_OPTIONS else 1,
+        key=f"closing_bet_manual_{item['id']}",
+        help=item["help"],
+        horizontal=True,
+    )
+    manual_checks[item["id"]] = next_value
+st.session_state.closing_bet_manual_checks = manual_checks
+
+if has_analysis:
+    manual_adjustment, manual_notes = compute_manual_adjustment(st.session_state.closing_bet_manual_checks)
+    practical_score = clamp_score(final_score + manual_adjustment)
+    decision_label, decision_reason = practical_decision(final_score, practical_score, st.session_state.closing_bet_manual_checks)
+
+st.subheader("최종 판정")
+decision_col1, decision_col2, decision_col3 = st.columns(3)
+decision_col1.metric("자동 점수", final_score)
+decision_col2.metric("수동 보정", manual_adjustment if has_analysis else 0)
+decision_col3.metric("실전 판단 점수", practical_score if has_analysis else 0)
+st.info(f"최종 판정: {decision_label}\n\n{decision_reason}")
+if manual_notes:
+    st.caption("수동 체크 반영: " + " / ".join(manual_notes))
+
+if has_analysis:
+    latest_close, latest_low, latest_high = latest_close_reference(stock_rows, quote)
+    if st.button("최종 후보 저장", use_container_width=True):
+        st.session_state.closing_bet_plan = {
+            "ticker": (quote or {}).get("resolved_ticker") or st.session_state.closing_bet_ticker,
+            "company_name": (quote or {}).get("company_name") or st.session_state.closing_bet_ticker,
+            "market": market,
+            "krx_exchange": (quote or {}).get("krx_exchange") or krx_exchange,
+            "auto_score": final_score,
+            "manual_adjustment": manual_adjustment,
+            "practical_score": practical_score,
+            "decision": decision_label,
+            "decision_reason": decision_reason,
+            "scenario": scenario,
+            "manual_notes": manual_notes,
+            "reference_close": latest_close,
+            "reference_low": latest_low,
+            "reference_high": latest_high,
+        }
+        st.success("최종 후보를 저장했습니다. 긴 대응 시나리오는 모의투자 메뉴에서 이어서 정리하면 됩니다.")
 
 with st.expander("체크 순서"):
     st.markdown(

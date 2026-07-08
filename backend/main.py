@@ -171,6 +171,10 @@ MARKET_TIMEZONES = {
     "krx": ZoneInfo("Asia/Seoul"),
     "us": ZoneInfo("America/New_York"),
 }
+MARKET_OPEN_TIMES = {
+    "krx": time(hour=9, minute=0),
+    "us": time(hour=9, minute=30),
+}
 MARKET_CLOSE_TIMES = {
     "krx": time(hour=15, minute=30),
     "us": time(hour=16, minute=0),
@@ -1477,16 +1481,25 @@ def log_toss_smart_message_event(event: str, **payload: Any) -> None:
     logger.warning("toss_smart_message %s", json.dumps({"event": event, **payload}, ensure_ascii=False, sort_keys=True))
 
 
+def build_toss_message_recipient_header(recipient_key_type: str, recipient_key: str) -> dict[str, str]:
+    if recipient_key_type == "user_key":
+        return {"x-toss-user-key": recipient_key}
+    if recipient_key_type == "anonymous_key":
+        return {"x-toss-anonymous-key": recipient_key}
+    raise HTTPException(status_code=400, detail="지원하지 않는 Toss 발송 식별자 타입입니다.")
+
+
 def call_toss_smart_message_api(
     path: str,
     *,
-    toss_user_key: str,
+    recipient_key: str,
+    recipient_key_type: str = "user_key",
     payload: dict[str, Any],
 ) -> dict[str, Any]:
     if not is_toss_smart_message_configured():
         raise HTTPException(status_code=503, detail="스마트 발송 연동 설정이 없어 Toss 메시지를 보낼 수 없습니다.")
 
-    masked_user_key = mask_toss_user_key(toss_user_key)
+    masked_recipient_key = mask_toss_user_key(recipient_key)
     template_set_code = str(payload.get("templateSetCode") or "")
     deployment_id = str(payload.get("deploymentId") or "") or None
     log_toss_smart_message_event(
@@ -1495,7 +1508,8 @@ def call_toss_smart_message_api(
         path=path,
         template_set_code=template_set_code,
         deployment_id=deployment_id,
-        masked_user_key=masked_user_key,
+        recipient_key_type=recipient_key_type,
+        masked_recipient_key=masked_recipient_key,
         cert_sha256=APPS_IN_TOSS_CERT_SHA256,
         cert_fingerprint_sha256=APPS_IN_TOSS_CERT_FINGERPRINT_SHA256,
     )
@@ -1504,7 +1518,7 @@ def call_toss_smart_message_api(
         f"{TOSS_SMART_MESSAGE_BASE_URL}{path}",
         headers={
             "Content-Type": "application/json",
-            "x-toss-user-key": toss_user_key,
+            **build_toss_message_recipient_header(recipient_key_type, recipient_key),
         },
         json=payload,
         cert=(APPS_IN_TOSS_CERT_PATH, APPS_IN_TOSS_KEY_PATH),
@@ -1523,7 +1537,8 @@ def call_toss_smart_message_api(
             path=path,
             template_set_code=template_set_code,
             deployment_id=deployment_id,
-            masked_user_key=masked_user_key,
+            recipient_key_type=recipient_key_type,
+            masked_recipient_key=masked_recipient_key,
             cert_sha256=APPS_IN_TOSS_CERT_SHA256,
             cert_fingerprint_sha256=APPS_IN_TOSS_CERT_FINGERPRINT_SHA256,
             status_code=response.status_code,
@@ -1544,7 +1559,8 @@ def call_toss_smart_message_api(
             path=path,
             template_set_code=template_set_code,
             deployment_id=deployment_id,
-            masked_user_key=masked_user_key,
+            recipient_key_type=recipient_key_type,
+            masked_recipient_key=masked_recipient_key,
             cert_sha256=APPS_IN_TOSS_CERT_SHA256,
             cert_fingerprint_sha256=APPS_IN_TOSS_CERT_FINGERPRINT_SHA256,
             error_code=error.get("errorCode"),
@@ -1560,7 +1576,8 @@ def call_toss_smart_message_api(
         path=path,
         template_set_code=template_set_code,
         deployment_id=deployment_id,
-        masked_user_key=masked_user_key,
+        recipient_key_type=recipient_key_type,
+        masked_recipient_key=masked_recipient_key,
         cert_sha256=APPS_IN_TOSS_CERT_SHA256,
         cert_fingerprint_sha256=APPS_IN_TOSS_CERT_FINGERPRINT_SHA256,
         result_type=result.get("resultType"),
@@ -1631,7 +1648,7 @@ def create_toss_inapp_alert_event(
 def send_toss_smart_test_message(
     *,
     account_id: str,
-    toss_user_key: str,
+    recipient_key: str,
     deployment_id: str,
     evaluation: dict[str, Any],
     notification_id: int | None = None,
@@ -1639,7 +1656,7 @@ def send_toss_smart_test_message(
     subject, message = format_closing_bet_notification_message(evaluation, int(evaluation.get("total_score") or 0))
     result = call_toss_smart_message_api(
         "/api-partner/v1/apps-in-toss/messenger/send-test-message",
-        toss_user_key=toss_user_key,
+        recipient_key=recipient_key,
         payload={
             "templateSetCode": TOSS_SMART_MESSAGE_TEMPLATE_CODE,
             "deploymentId": deployment_id,
@@ -1653,14 +1670,14 @@ def send_toss_smart_test_message(
 def send_toss_smart_message(
     *,
     account_id: str,
-    toss_user_key: str,
+    recipient_key: str,
     evaluation: dict[str, Any],
     notification_id: int | None = None,
 ) -> dict[str, Any]:
     subject, message = format_closing_bet_notification_message(evaluation, int(evaluation.get("total_score") or 0))
     result = call_toss_smart_message_api(
         "/api-partner/v1/apps-in-toss/messenger/send-message",
-        toss_user_key=toss_user_key,
+        recipient_key=recipient_key,
         payload={
             "templateSetCode": TOSS_SMART_MESSAGE_TEMPLATE_CODE,
             "context": build_toss_smart_message_context(evaluation),
@@ -1689,7 +1706,7 @@ def send_closing_bet_notification(
             raise HTTPException(status_code=400, detail="토스 스마트 발송에는 account_id와 toss_user_key가 필요합니다.")
         send_toss_smart_message(
             account_id=account_id,
-            toss_user_key=toss_user_key,
+            recipient_key=toss_user_key,
             evaluation=payload,
             notification_id=notification_id,
         )
@@ -1824,7 +1841,7 @@ def test_closing_bet_notification(request: ClosingBetNotificationTestRequest) ->
             raise HTTPException(status_code=400, detail="토스 테스트 발송에는 account_id, toss_user_key, deployment_id가 필요합니다.")
         result = send_toss_smart_test_message(
             account_id=request.account_id,
-            toss_user_key=request.toss_user_key,
+            recipient_key=request.toss_user_key,
             deployment_id=request.deployment_id,
             evaluation=evaluation,
         )
@@ -2011,17 +2028,40 @@ def resolve_sector_snapshot_cutoff_date(market: str, now: datetime | None = None
     normalized_market = normalize_market(market)
     timezone = MARKET_TIMEZONES[normalized_market]
     market_now = now.astimezone(timezone) if now else datetime.now(timezone)
+    open_time = MARKET_OPEN_TIMES[normalized_market]
     close_time = MARKET_CLOSE_TIMES[normalized_market]
     market_today = market_now.date()
 
     if market_today.weekday() >= 5:
         return previous_business_day(market_today)
 
+    market_open = datetime.combine(market_today, open_time, tzinfo=timezone)
     market_close = datetime.combine(market_today, close_time, tzinfo=timezone)
+    if market_now < market_open:
+        return previous_business_day(market_today - timedelta(days=1))
+
     if market_now >= market_close:
         return market_today
 
-    return previous_business_day(market_today - timedelta(days=1))
+    return market_today
+
+
+def describe_sector_snapshot_status(market: str, now: datetime | None = None) -> tuple[str, bool]:
+    normalized_market = normalize_market(market)
+    timezone = MARKET_TIMEZONES[normalized_market]
+    market_now = now.astimezone(timezone) if now else datetime.now(timezone)
+    market_today = market_now.date()
+
+    if market_today.weekday() >= 5:
+        return "휴장일 기준 최근 영업일 확정값", False
+
+    market_open = datetime.combine(market_today, MARKET_OPEN_TIMES[normalized_market], tzinfo=timezone)
+    market_close = datetime.combine(market_today, MARKET_CLOSE_TIMES[normalized_market], tzinfo=timezone)
+    if market_now < market_open:
+        return "장 시작 전 기준 최근 영업일 확정값", False
+    if market_now >= market_close:
+        return "장 마감 기준 확정값", False
+    return "장중 잠정값", True
 
 
 def trim_series_to_cutoff(series: pd.Series, cutoff_date: date) -> pd.Series:
@@ -2262,6 +2302,7 @@ def summarize_sector_rows(market: str, rows: list[dict[str, Any]]) -> str:
 def create_sector_snapshot(market: str) -> dict[str, Any]:
     normalized_market = normalize_market(market)
     cutoff_date = resolve_sector_snapshot_cutoff_date(normalized_market)
+    snapshot_status, intraday_estimate = describe_sector_snapshot_status(normalized_market)
     end_date = cutoff_date + timedelta(days=1)
     start_date = end_date - timedelta(days=220)
 
@@ -2289,6 +2330,8 @@ def create_sector_snapshot(market: str) -> dict[str, Any]:
             "market": normalized_market,
             "market_name": sector_market_name(normalized_market),
             "as_of": as_of,
+            "snapshot_status": snapshot_status,
+            "intraday_estimate": intraday_estimate,
             "summary": summarize_sector_rows(normalized_market, sorted_rows),
             "leaders": sorted_rows[:3],
             "laggards": list(reversed(sorted_rows[-3:])),
