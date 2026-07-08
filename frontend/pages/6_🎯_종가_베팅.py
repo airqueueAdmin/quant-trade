@@ -34,6 +34,16 @@ SCENARIO_MODIFIERS = {
     QUICK_SCENARIOS[3]: -6,
 }
 
+INITIAL_SCORES = {
+    "sector_strength": 0,
+    "close_strength": 0,
+    "volume_persistence": 0,
+    "leader_status": 0,
+    "news_follow_through": 0,
+    "tomorrow_catalyst": 0,
+    "risk_control": 0,
+}
+
 def clamp_score(value: float) -> int:
     return max(0, min(100, round(value)))
 
@@ -388,15 +398,7 @@ if "closing_bet_ticker_market" not in st.session_state:
 if "closing_bet_ticker" not in st.session_state:
     st.session_state.closing_bet_ticker = default_ticker_for_market("krx")
 if "closing_bet_scores" not in st.session_state:
-    st.session_state.closing_bet_scores = {
-        "sector_strength": 50,
-        "close_strength": 55,
-        "volume_persistence": 52,
-        "leader_status": 45,
-        "news_follow_through": 50,
-        "tomorrow_catalyst": 48,
-        "risk_control": 50,
-    }
+    st.session_state.closing_bet_scores = INITIAL_SCORES.copy()
 if "closing_bet_scenario" not in st.session_state:
     st.session_state.closing_bet_scenario = QUICK_SCENARIOS[1]
 
@@ -410,6 +412,13 @@ market = st.radio(
 if st.session_state.get("closing_bet_ticker_market") != market:
     st.session_state.closing_bet_ticker = default_ticker_for_market(market)
     st.session_state.closing_bet_ticker_market = market
+    st.session_state.closing_bet_quote = None
+    st.session_state.closing_bet_sentiment = None
+    st.session_state.closing_bet_snapshot = None
+    st.session_state.closing_bet_sector = None
+    st.session_state.closing_bet_rows = []
+    st.session_state.closing_bet_scores = INITIAL_SCORES.copy()
+    st.session_state.closing_bet_scenario = QUICK_SCENARIOS[1]
 
 krx_exchange = "auto"
 if market == "krx":
@@ -515,7 +524,8 @@ matched_sector = st.session_state.get("closing_bet_sector")
 stock_rows = st.session_state.get("closing_bet_rows", [])
 scores = st.session_state.closing_bet_scores
 scenario = st.session_state.get("closing_bet_scenario", QUICK_SCENARIOS[1])
-final_score = total_score(scores, scenario)
+has_analysis = quote is not None or sentiment is not None or snapshot is not None or bool(stock_rows)
+final_score = total_score(scores, scenario) if has_analysis else 0
 risk_flags = derive_risk_flags(stock_rows, matched_sector, sentiment, scenario, scores)
 
 score_col1, score_col2 = st.columns([1, 1.1])
