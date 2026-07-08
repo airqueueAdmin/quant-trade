@@ -1394,6 +1394,12 @@ def exchange_toss_login_authorization_code(authorization_code: str, referrer: st
     result = extract_response_payload(response)
     if not isinstance(result, dict):
         raise HTTPException(status_code=503, detail="토스 로그인 토큰 응답을 해석하지 못했습니다.")
+    if result.get("resultType") == "FAIL":
+        error = result.get("error") or {}
+        raise HTTPException(
+            status_code=503,
+            detail=f"토스 로그인 토큰 교환 실패: {error.get('errorCode', 'UNKNOWN')} / {error.get('reason', '요청에 실패했습니다.')}",
+        )
     return result
 
 
@@ -1435,11 +1441,42 @@ def fetch_toss_login_user_key(access_token: str) -> dict[str, Any]:
     }
 
 
+def extract_toss_access_token(token_result: dict[str, Any]) -> str:
+    candidates = [
+        token_result,
+        token_result.get("success") or {},
+        (token_result.get("data") or {}) if isinstance(token_result.get("data"), dict) else {},
+    ]
+    success = token_result.get("success") or {}
+    if isinstance(success, dict):
+        data = success.get("data")
+        if isinstance(data, dict):
+            candidates.append(data)
+
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        value = candidate.get("access_token") or candidate.get("accessToken")
+        if value:
+            return str(value)
+    return ""
+
+
 def resolve_toss_login_user_key(authorization_code: str, referrer: str | None = None) -> dict[str, Any]:
     token_result = exchange_toss_login_authorization_code(authorization_code, referrer)
-    access_token = str(token_result.get("access_token") or token_result.get("accessToken") or "")
+    access_token = extract_toss_access_token(token_result)
     if not access_token:
-        raise HTTPException(status_code=503, detail="토스 로그인 토큰 응답에 access_token이 없습니다.")
+        top_level_keys = ", ".join(sorted(str(key) for key in token_result.keys())) if isinstance(token_result, dict) else "-"
+        success_keys = "-"
+        if isinstance(token_result, dict) and isinstance(token_result.get("success"), dict):
+            success_keys = ", ".join(sorted(str(key) for key in token_result["success"].keys()))
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "토스 로그인 토큰 응답에 access token이 없습니다. "
+                f"top-level keys: [{top_level_keys}] / success keys: [{success_keys}]"
+            ),
+        )
 
     user_result = fetch_toss_login_user_key(access_token)
     return {
