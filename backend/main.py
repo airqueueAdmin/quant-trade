@@ -459,7 +459,7 @@ class ClosingBetNotificationRequest(PaperTradingAccountRequest):
     channel: str = Field(min_length=4, max_length=16)
     destination: str = Field(min_length=3, max_length=200)
     toss_user_key: str | None = Field(default=None, min_length=8, max_length=256)
-    threshold_score: int = Field(default=70, ge=0, le=100)
+    threshold_score: int = Field(default=0, ge=0, le=100)
     active: bool = Field(default=True)
 
     @field_validator("market")
@@ -1867,7 +1867,7 @@ def dispatch_closing_bet_notifications(market: str | None = None, limit: int = 1
             evaluation = evaluate_closing_bet(item["ticker"], item["market"], item.get("krx_exchange", "auto"))
             score = int(evaluation.get("total_score") or 0)
             signal_date = str(evaluation.get("signal_date") or "")
-            threshold_score = int(item.get("threshold_score") or 70)
+            threshold_score = int(item.get("threshold_score")) if item.get("threshold_score") is not None else 0
             if score < threshold_score:
                 skipped.append({"id": item["id"], "reason": "threshold_not_met", "score": score})
             elif item.get("last_signal_date") == signal_date and item.get("last_notified_at"):

@@ -72,6 +72,16 @@ const SCENARIO_MODIFIERS: Record<(typeof QUICK_SCENARIOS)[number], number> = {
   [QUICK_SCENARIOS[3]]: -6,
 }
 
+const INITIAL_SCORES = {
+  sectorStrength: 0,
+  closeStrength: 0,
+  volumePersistence: 0,
+  leaderStatus: 0,
+  newsFollowThrough: 0,
+  tomorrowCatalyst: 0,
+  riskControl: 0,
+} as const
+
 function clampScore(value: number) {
   return Math.max(0, Math.min(100, Math.round(value)))
 }
@@ -492,15 +502,7 @@ export function ClosingBetPage() {
   const [resolvedSector, setResolvedSector] = useState<SectorRow | null>(null)
   const [stockRows, setStockRows] = useState<StockHistoryRow[]>([])
   const [scenario, setScenario] = useState<(typeof QUICK_SCENARIOS)[number]>(QUICK_SCENARIOS[1])
-  const [scores, setScores] = useState({
-    sectorStrength: 50,
-    closeStrength: 55,
-    volumePersistence: 52,
-    leaderStatus: 45,
-    newsFollowThrough: 50,
-    tomorrowCatalyst: 48,
-    riskControl: 50,
-  })
+  const [scores, setScores] = useState(INITIAL_SCORES)
   const [notifications, setNotifications] = useState<ClosingBetNotification[]>([])
   const [alerts, setAlerts] = useState<ClosingBetAlertEvent[]>([])
   const [notificationLoading, setNotificationLoading] = useState(false)
@@ -508,7 +510,7 @@ export function ClosingBetPage() {
   const [notificationMessage, setNotificationMessage] = useState<string | null>(null)
   const [notificationChannel, setNotificationChannel] = useState<ClosingBetNotificationChannel>('toss_inapp')
   const [notificationDestination, setNotificationDestination] = useState('')
-  const [notificationThreshold, setNotificationThreshold] = useState('70')
+  const [notificationThreshold, setNotificationThreshold] = useState('0')
   const [tossUserKey, setTossUserKey] = useState<string | null>(null)
   const [tossLoginScope, setTossLoginScope] = useState<string[]>([])
   const [tossLoginConfigured, setTossLoginConfigured] = useState<boolean | null>(null)
@@ -519,20 +521,23 @@ export function ClosingBetPage() {
   const [testingNotification, setTestingNotification] = useState(false)
   const [deletingNotificationId, setDeletingNotificationId] = useState<number | null>(null)
 
-  const totalScore = useMemo(
-    () =>
-      clampScore(
-        scores.sectorStrength * 0.2 +
-          scores.closeStrength * 0.24 +
-          scores.volumePersistence * 0.2 +
-          scores.leaderStatus * 0.16 +
-          scores.newsFollowThrough * 0.1 +
-          scores.tomorrowCatalyst * 0.05 +
-          scores.riskControl * 0.05 +
-          SCENARIO_MODIFIERS[scenario],
-      ),
-    [scenario, scores],
-  )
+  const hasAnalysis = quote !== null || sentiment !== null || sectorSnapshot !== null || stockRows.length > 0
+
+  const totalScore = useMemo(() => {
+    if (!hasAnalysis) {
+      return 0
+    }
+    return clampScore(
+      scores.sectorStrength * 0.2 +
+        scores.closeStrength * 0.24 +
+        scores.volumePersistence * 0.2 +
+        scores.leaderStatus * 0.16 +
+        scores.newsFollowThrough * 0.1 +
+        scores.tomorrowCatalyst * 0.05 +
+        scores.riskControl * 0.05 +
+        SCENARIO_MODIFIERS[scenario],
+    )
+  }, [hasAnalysis, scenario, scores])
 
   const tone = scoreTone(totalScore)
   const tickerLabel = normalizeTicker(ticker, market) || defaultTicker(market)
@@ -801,6 +806,7 @@ export function ClosingBetPage() {
       setSectorSnapshot(null)
       setResolvedSector(null)
       setStockRows([])
+      setScores(INITIAL_SCORES)
     } finally {
       setLoading(false)
     }
@@ -961,6 +967,8 @@ export function ClosingBetPage() {
     setSectorSnapshot(null)
     setResolvedSector(null)
     setStockRows([])
+    setScenario(QUICK_SCENARIOS[1])
+    setScores(INITIAL_SCORES)
     setError(null)
   }
 
@@ -1219,7 +1227,7 @@ export function ClosingBetPage() {
                 inputMode="numeric"
                 value={notificationThreshold}
                 onChange={(event) => setNotificationThreshold(event.target.value)}
-                placeholder="70"
+                placeholder="0"
               />
             </div>
             {notificationChannel === 'toss_inapp' ? (

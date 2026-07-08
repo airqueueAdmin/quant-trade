@@ -40,7 +40,7 @@ create table if not exists public.closing_bet_notifications (
     channel text not null check (channel in ('email', 'toss_inapp')),
     destination text not null,
     toss_user_key text,
-    threshold_score integer not null default 70 check (threshold_score between 0 and 100),
+    threshold_score integer not null default 0 check (threshold_score between 0 and 100),
     active boolean not null default true,
     last_score integer,
     last_signal_date date,
