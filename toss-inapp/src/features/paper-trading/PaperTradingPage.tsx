@@ -5,6 +5,8 @@ import { ApiError } from '../../shared/api/http'
 import type { KrxExchange, KRXSearchResult, PaperTradingState, QuoteSnapshot } from '../../shared/api/types'
 import { clearStoredSession, readStoredSession, writeStoredSession, type AppSession } from '../../shared/session/appSession'
 
+const KST_TIME_ZONE = 'Asia/Seoul'
+
 const COMMON_KRX_COMPANIES: KRXSearchResult[] = [
   { name: '삼성전자', ticker: '005930', krx_exchange: 'kospi', display_name: '삼성전자 (005930, KOSPI)' },
   { name: 'SK하이닉스', ticker: '000660', krx_exchange: 'kospi', display_name: 'SK하이닉스 (000660, KOSPI)' },
@@ -52,7 +54,25 @@ function formatTradeTime(value?: string | null) {
   if (!value) {
     return '-'
   }
-  return value.replace('T', ' ').replace('+00:00', '')
+
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) {
+    return value.replace('T', ' ').replace('+00:00', '')
+  }
+
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: KST_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(parsed)
+
+  const formatted = Object.fromEntries(parts.filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]))
+  return `${formatted.year}-${formatted.month}-${formatted.day} ${formatted.hour}:${formatted.minute}:${formatted.second} KST`
 }
 
 export function PaperTradingPage() {

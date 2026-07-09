@@ -1,5 +1,5 @@
 import os
-from datetime import datetime, time
+from datetime import datetime, time, timezone
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -61,6 +61,18 @@ def format_date(value: str | None) -> str:
     if not value:
         return "-"
     return str(value).split("T", 1)[0]
+
+
+def format_trade_datetime(value: str | None) -> str:
+    if not value:
+        return "-"
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(KRX_TZ).strftime("%Y-%m-%d %H:%M:%S KST")
+    except ValueError:
+        return str(value).replace("T", " ").replace("+00:00", "")
 
 
 def format_reference_price(value: float | None) -> str:
@@ -308,7 +320,7 @@ def build_trades_frame(trades: list[dict]) -> pd.DataFrame:
     for trade in trades:
         rows.append(
             {
-                "일시": str(trade.get("traded_at", "-")).replace("T", " ").replace("+00:00", ""),
+                "일시": format_trade_datetime(trade.get("traded_at")),
                 "구분": "매수" if trade.get("side") == "buy" else "매도",
                 "종목": trade.get("company_name") or trade.get("ticker"),
                 "티커": trade.get("ticker"),
