@@ -16,6 +16,16 @@ from market_utils import (
 from ui_helpers import inject_stage_banner_styles, render_stage_banner
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000")
+PERIOD_OPTIONS = {
+    3: "최근 3일",
+    7: "최근 7일",
+    14: "최근 14일",
+    30: "최근 30일",
+}
+SOURCE_FILTER_OPTIONS = {
+    "all": "전체",
+    "exclude_press_release": "보도자료 제외",
+}
 
 st.set_page_config(layout="wide", page_title="AI 시장 분석")
 inject_google_analytics(os.getenv("GA_MEASUREMENT_ID") or os.getenv("GA_TAG_ID"), "ai_analysis")
@@ -98,10 +108,27 @@ if st.session_state.step_ai == 1:
         key="ticker_input_ai",
         help=ticker_help_text(market),
     )
+    period_days = st.selectbox(
+        "분석 기간",
+        list(PERIOD_OPTIONS.keys()),
+        index=1,
+        key="sentiment_period_days_input",
+        format_func=lambda value: PERIOD_OPTIONS[value],
+        help="최근 며칠 동안의 뉴스를 기준으로 요약할지 선택합니다.",
+    )
+    source_filter = st.selectbox(
+        "소스 필터",
+        list(SOURCE_FILTER_OPTIONS.keys()),
+        key="sentiment_source_filter_input",
+        format_func=lambda value: SOURCE_FILTER_OPTIONS[value],
+        help="보도자료성 기사까지 포함할지 선택합니다.",
+    )
     if st.button("AI 분석 실행"):
         st.session_state.ticker_sentiment = st.session_state.ticker_input_ai
         st.session_state.market_sentiment = st.session_state.market_input_ai
         st.session_state.krx_exchange_sentiment = krx_exchange
+        st.session_state.sentiment_period_days = period_days
+        st.session_state.sentiment_source_filter = source_filter
         st.session_state.step_ai = 2
         st.rerun()
 
@@ -120,6 +147,8 @@ if st.session_state.step_ai >= 2:
                 params={
                     "market": st.session_state.get("market_sentiment", "us"),
                     "krx_exchange": st.session_state.get("krx_exchange_sentiment", "auto"),
+                    "period_days": st.session_state.get("sentiment_period_days", 7),
+                    "source_filter": st.session_state.get("sentiment_source_filter", "all"),
                 },
             )
             response.raise_for_status()
@@ -130,11 +159,17 @@ if st.session_state.step_ai >= 2:
             resolved_ticker = sentiment_results.get("resolved_ticker", st.session_state["ticker_sentiment"])
             news_api_enabled = sentiment_results.get("news_api_enabled", True)
             attempted_queries = sentiment_results.get("attempted_queries", [])
+            period_days = sentiment_results.get("period_days", st.session_state.get("sentiment_period_days", 7))
+            source_filter_label = sentiment_results.get(
+                "source_filter_label",
+                SOURCE_FILTER_OPTIONS.get(st.session_state.get("sentiment_source_filter", "all"), "전체"),
+            )
 
             if company_name:
                 st.caption(f"분석 대상: {company_name} ({resolved_ticker})")
             else:
                 st.caption(f"분석 대상 심볼: {resolved_ticker}")
+            st.caption(f"분석 기준: 최근 {period_days}일 / 소스 필터: {source_filter_label}")
 
             if not news_api_enabled:
                 st.warning("백엔드에 `NEWS_API_KEY`가 설정되지 않아 최신 뉴스 수집을 할 수 없습니다.")
@@ -152,9 +187,20 @@ if st.session_state.step_ai >= 2:
             st.subheader("📝 AI 요약")
             st.write(sentiment_results.get('summary', '요약 정보를 가져올 수 없습니다.'))
 
+            st.subheader("🎯 투자 시사점")
+            st.write(sentiment_results.get("investment_implications", "투자 시사점을 가져오지 못했습니다."))
+
             st.subheader("📰 관련 뉴스 목록")
             for article in sentiment_results.get('articles', []):
+                source_name = article.get("source_name") or "출처 미상"
+                published_at = article.get("published_at") or "-"
                 st.markdown(f"- [{article['title']}]({article['url']})")
+                st.caption(f"{source_name} / {published_at}")
+
+            if attempted_queries:
+                with st.expander("뉴스 검색 쿼리 보기"):
+                    for item in attempted_queries:
+                        st.write(f"- `{item.get('query', '')}` / 언어 `{item.get('language', '')}`")
 
         except requests.exceptions.RequestException as e:
             st.error(f"백엔드 서버 연결에 실패했습니다: {e}")

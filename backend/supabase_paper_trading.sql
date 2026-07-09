@@ -67,11 +67,38 @@ create table if not exists public.closing_bet_alert_events (
     read_at timestamptz
 );
 
+create table if not exists public.saved_backtests (
+    id bigint generated always as identity primary key,
+    account_id text not null references public.paper_trading_accounts(account_id) on delete cascade,
+    save_name text not null,
+    run_type text not null check (run_type in ('backtest', 'optimization')),
+    strategy_key text not null check (strategy_key in ('moving_average', 'rsi', 'bollinger_bands')),
+    strategy_name text not null,
+    ticker text not null,
+    resolved_ticker text,
+    company_name text,
+    market text not null check (market in ('krx', 'us')),
+    krx_exchange text not null default 'auto',
+    start_date date not null,
+    end_date date not null,
+    initial_capital numeric(18, 2) not null check (initial_capital > 0),
+    order_type text not null check (order_type in ('all_in', 'fixed_amount')),
+    fixed_amount numeric(18, 2),
+    metric_to_optimize text,
+    request_payload jsonb not null default '{}'::jsonb,
+    result_payload jsonb not null default '{}'::jsonb,
+    performance_summary jsonb not null default '{}'::jsonb,
+    created_at timestamptz not null default timezone('utc', now()),
+    updated_at timestamptz not null default timezone('utc', now())
+);
+
 create index if not exists idx_paper_trading_positions_account on public.paper_trading_positions(account_id);
 create index if not exists idx_paper_trading_trades_account_time on public.paper_trading_trades(account_id, traded_at desc);
 create index if not exists idx_closing_bet_notifications_account on public.closing_bet_notifications(account_id);
 create index if not exists idx_closing_bet_notifications_active on public.closing_bet_notifications(active, market, updated_at desc);
 create index if not exists idx_closing_bet_alert_events_account on public.closing_bet_alert_events(account_id, created_at desc);
+create index if not exists idx_saved_backtests_account_time on public.saved_backtests(account_id, updated_at desc);
+create index if not exists idx_saved_backtests_lookup on public.saved_backtests(account_id, run_type, strategy_key, created_at desc);
 
 create or replace function public.reset_paper_trading_account(
     p_account_id text,
@@ -234,15 +261,18 @@ revoke all on public.paper_trading_positions from anon, authenticated;
 revoke all on public.paper_trading_trades from anon, authenticated;
 revoke all on public.closing_bet_notifications from anon, authenticated;
 revoke all on public.closing_bet_alert_events from anon, authenticated;
+revoke all on public.saved_backtests from anon, authenticated;
 
 grant select, insert, update, delete on public.paper_trading_accounts to service_role;
 grant select, insert, update, delete on public.paper_trading_positions to service_role;
 grant select, insert, update, delete on public.paper_trading_trades to service_role;
 grant select, insert, update, delete on public.closing_bet_notifications to service_role;
 grant select, insert, update, delete on public.closing_bet_alert_events to service_role;
+grant select, insert, update, delete on public.saved_backtests to service_role;
 grant usage, select on sequence public.paper_trading_trades_id_seq to service_role;
 grant usage, select on sequence public.closing_bet_notifications_id_seq to service_role;
 grant usage, select on sequence public.closing_bet_alert_events_id_seq to service_role;
+grant usage, select on sequence public.saved_backtests_id_seq to service_role;
 
 revoke all on function public.reset_paper_trading_account(text, numeric) from public, anon, authenticated;
 revoke all on function public.execute_paper_trade(text, text, text, text, text, numeric, integer) from public, anon, authenticated;
@@ -254,6 +284,7 @@ alter table public.paper_trading_positions enable row level security;
 alter table public.paper_trading_trades enable row level security;
 alter table public.closing_bet_notifications enable row level security;
 alter table public.closing_bet_alert_events enable row level security;
+alter table public.saved_backtests enable row level security;
 
 drop policy if exists paper_trading_accounts_service_role_all on public.paper_trading_accounts;
 create policy paper_trading_accounts_service_role_all
@@ -290,6 +321,14 @@ with check (true);
 drop policy if exists closing_bet_alert_events_service_role_all on public.closing_bet_alert_events;
 create policy closing_bet_alert_events_service_role_all
 on public.closing_bet_alert_events
+for all
+to service_role
+using (true)
+with check (true);
+
+drop policy if exists saved_backtests_service_role_all on public.saved_backtests;
+create policy saved_backtests_service_role_all
+on public.saved_backtests
 for all
 to service_role
 using (true)

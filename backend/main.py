@@ -26,6 +26,7 @@ from dotenv import load_dotenv
 
 from backtester import backtest_buy_and_hold, backtest_strategy
 from data_provider import (
+    MarketDataRateLimitError,
     get_stock_data,
     get_symbol_profile,
     search_krx_stocks,
@@ -193,6 +194,19 @@ CLOSING_BET_SCENARIO_MODIFIERS = {
     CLOSING_BET_QUICK_SCENARIOS[1]: 2,
     CLOSING_BET_QUICK_SCENARIOS[2]: -4,
     CLOSING_BET_QUICK_SCENARIOS[3]: -6,
+}
+BACKTEST_STRATEGY_LABELS = {
+    "moving_average": "이동평균",
+    "rsi": "RSI",
+    "bollinger_bands": "볼린저 밴드",
+}
+BACKTEST_RUN_TYPE_LABELS = {
+    "backtest": "일반 백테스트",
+    "optimization": "전략 최적화",
+}
+SENTIMENT_SOURCE_FILTER_LABELS = {
+    "all": "전체",
+    "exclude_press_release": "보도자료 제외",
 }
 
 
@@ -410,6 +424,93 @@ class PaperTradingAccountRequest(BaseModel):
         if value is None:
             return None
         return normalize_paper_account_id(value)
+
+
+class SavedBacktestRequest(PaperTradingAccountRequest):
+    save_name: str | None = Field(default=None, max_length=120)
+    run_type: str = Field(default="backtest")
+    strategy_key: str = Field(min_length=3, max_length=32)
+    ticker: str = Field(min_length=1, max_length=32)
+    resolved_ticker: str | None = Field(default=None, max_length=32)
+    company_name: str | None = Field(default=None, max_length=128)
+    market: str = Field(default="us")
+    krx_exchange: str = Field(default="auto")
+    start_date: str
+    end_date: str
+    initial_capital: float = Field(default=100000.0, gt=0)
+    order_type: str = Field(default="all_in")
+    fixed_amount: float | None = Field(default=None, gt=0)
+    metric_to_optimize: str | None = Field(default=None, max_length=64)
+    request_payload: dict[str, Any] = Field(default_factory=dict)
+    result_payload: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("save_name")
+    @classmethod
+    def normalize_save_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
+
+    @field_validator("run_type")
+    @classmethod
+    def validate_run_type(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in BACKTEST_RUN_TYPE_LABELS:
+            raise ValueError(f"run_type must be one of {sorted(BACKTEST_RUN_TYPE_LABELS)}")
+        return normalized
+
+    @field_validator("strategy_key")
+    @classmethod
+    def validate_strategy_key(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in BACKTEST_STRATEGY_LABELS:
+            raise ValueError(f"strategy_key must be one of {sorted(BACKTEST_STRATEGY_LABELS)}")
+        return normalized
+
+    @field_validator("ticker")
+    @classmethod
+    def normalize_ticker(cls, value: str) -> str:
+        return normalize_ticker_input(value)
+
+    @field_validator("resolved_ticker")
+    @classmethod
+    def normalize_resolved_ticker(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return normalize_ticker_input(value)
+
+    @field_validator("market")
+    @classmethod
+    def validate_market(cls, value: str) -> str:
+        return normalize_market(value)
+
+    @field_validator("krx_exchange")
+    @classmethod
+    def validate_krx_exchange(cls, value: str) -> str:
+        return normalize_krx_exchange(value)
+
+    @field_validator("order_type")
+    @classmethod
+    def validate_order_type(cls, value: str) -> str:
+        if value not in {"all_in", "fixed_amount"}:
+            raise ValueError("order_type must be 'all_in' or 'fixed_amount'")
+        return value
+
+    @model_validator(mode="after")
+    def validate_request(self) -> "SavedBacktestRequest":
+        if self.order_type == "fixed_amount" and self.fixed_amount is None:
+            raise ValueError("fixed_amount is required when order_type is 'fixed_amount'")
+
+        try:
+            start_ts = pd.Timestamp(self.start_date)
+            end_ts = pd.Timestamp(self.end_date)
+        except ValueError as exc:
+            raise ValueError(f"날짜 형식이 잘못되었습니다: {exc}") from exc
+
+        if start_ts >= end_ts:
+            raise ValueError("start_date must be earlier than end_date")
+        return self
 
 
 class PaperTradingOrderRequest(PaperTradingAccountRequest):
@@ -685,7 +786,10 @@ def ensure_data(ticker: str, start_date: str, end_date: str, market: str = "us",
     if start_ts >= end_ts:
         raise HTTPException(status_code=400, detail="시작일은 종료일보다 빨라야 합니다.")
 
-    data = get_stock_data(ticker, start_date, end_date, market=market, krx_exchange=krx_exchange)
+    try:
+        data = get_stock_data(ticker, start_date, end_date, market=market, krx_exchange=krx_exchange)
+    except MarketDataRateLimitError as exc:
+        raise HTTPException(status_code=503, detail="시세 제공사 요청 제한으로 가격 데이터를 잠시 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.") from exc
     if data.empty:
         raise HTTPException(status_code=404, detail=f"{ticker}의 가격 데이터를 찾을 수 없습니다.")
 
@@ -728,6 +832,19 @@ def validate_market_params(market: str, krx_exchange: str) -> tuple[str, str]:
         return normalize_market(market), normalize_krx_exchange(krx_exchange)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def validate_sentiment_options(period_days: int, source_filter: str) -> tuple[int, str]:
+    if period_days < 1 or period_days > 30:
+        raise HTTPException(status_code=400, detail="period_days must be between 1 and 30")
+
+    normalized_source_filter = source_filter.strip().lower()
+    if normalized_source_filter not in SENTIMENT_SOURCE_FILTER_LABELS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"source_filter must be one of {sorted(SENTIMENT_SOURCE_FILTER_LABELS)}",
+        )
+    return period_days, normalized_source_filter
 
 
 def is_supabase_configured() -> bool:
@@ -947,20 +1064,158 @@ def reset_paper_trading_account(account_id: str) -> dict[str, Any]:
     return normalize_value({"account_id": account_id, "result": result})
 
 
-def create_sentiment_snapshot(ticker: str, market: str = "us", krx_exchange: str = "auto") -> dict[str, Any]:
+def build_backtest_performance_summary(result_payload: dict[str, Any], run_type: str) -> dict[str, Any]:
+    normalized_run_type = run_type.strip().lower()
+    if normalized_run_type == "optimization":
+        return normalize_value(
+            {
+                "best_metric_value": result_payload.get("best_metric_value", 0),
+                "metric_optimized": result_payload.get("metric_optimized"),
+                "best_params": result_payload.get("best_params", {}),
+                "result_count": len(result_payload.get("all_optimization_results") or []),
+            }
+        )
+
+    metrics = result_payload.get("performance_metrics", {}) or {}
+    benchmark_metrics = result_payload.get("benchmark_metrics", {}) or {}
+    comparison_metrics = result_payload.get("comparison_metrics", {}) or {}
+    return normalize_value(
+        {
+            "total_return_pct": metrics.get("total_return_pct", 0),
+            "sharpe_ratio": metrics.get("sharpe_ratio", 0),
+            "max_drawdown_pct": metrics.get("max_drawdown_pct", 0),
+            "cagr_pct": metrics.get("cagr_pct", 0),
+            "final_total_value": metrics.get("final_total_value", 0),
+            "total_trades": metrics.get("total_trades", 0),
+            "benchmark_total_return_pct": benchmark_metrics.get("total_return_pct", 0),
+            "excess_return_pct": comparison_metrics.get("excess_return_pct", 0),
+        }
+    )
+
+
+def build_saved_backtest_name(request: SavedBacktestRequest) -> str:
+    if request.save_name:
+        return request.save_name
+
+    base_name = request.company_name or request.resolved_ticker or request.ticker
+    strategy_label = BACKTEST_STRATEGY_LABELS[request.strategy_key]
+    run_type_label = BACKTEST_RUN_TYPE_LABELS[request.run_type]
+    return f"{base_name} {strategy_label} {run_type_label}"
+
+
+def list_saved_backtests(account_id: str) -> list[dict[str, Any]]:
+    rows = call_supabase(
+        "GET",
+        "/rest/v1/saved_backtests",
+        params={
+            "account_id": f"eq.{account_id}",
+            "select": (
+                "id,save_name,run_type,strategy_key,strategy_name,ticker,resolved_ticker,"
+                "company_name,market,krx_exchange,start_date,end_date,initial_capital,"
+                "order_type,fixed_amount,metric_to_optimize,performance_summary,created_at,updated_at"
+            ),
+            "order": "updated_at.desc",
+            "limit": 50,
+        },
+    ) or []
+    return normalize_value(rows)
+
+
+def get_saved_backtest(account_id: str, saved_backtest_id: int) -> dict[str, Any]:
+    rows = call_supabase(
+        "GET",
+        "/rest/v1/saved_backtests",
+        params={
+            "account_id": f"eq.{account_id}",
+            "id": f"eq.{saved_backtest_id}",
+            "select": (
+                "id,save_name,run_type,strategy_key,strategy_name,ticker,resolved_ticker,"
+                "company_name,market,krx_exchange,start_date,end_date,initial_capital,"
+                "order_type,fixed_amount,metric_to_optimize,request_payload,result_payload,"
+                "performance_summary,created_at,updated_at"
+            ),
+            "limit": 1,
+        },
+    ) or []
+    if not rows:
+        raise HTTPException(status_code=404, detail="저장한 백테스트 결과를 찾지 못했습니다.")
+    return normalize_value(rows[0])
+
+
+def save_backtest_run(request: SavedBacktestRequest) -> dict[str, Any]:
+    ensure_paper_account(request.account_id)
+    performance_summary = build_backtest_performance_summary(request.result_payload, request.run_type)
+    payload = {
+        "account_id": request.account_id,
+        "save_name": build_saved_backtest_name(request),
+        "run_type": request.run_type,
+        "strategy_key": request.strategy_key,
+        "strategy_name": BACKTEST_STRATEGY_LABELS[request.strategy_key],
+        "ticker": request.ticker,
+        "resolved_ticker": request.resolved_ticker or request.ticker,
+        "company_name": request.company_name,
+        "market": request.market,
+        "krx_exchange": request.krx_exchange,
+        "start_date": request.start_date,
+        "end_date": request.end_date,
+        "initial_capital": request.initial_capital,
+        "order_type": request.order_type,
+        "fixed_amount": request.fixed_amount,
+        "metric_to_optimize": request.metric_to_optimize,
+        "request_payload": normalize_value(request.request_payload),
+        "result_payload": normalize_value(request.result_payload),
+        "performance_summary": performance_summary,
+    }
+    rows = call_supabase(
+        "POST",
+        "/rest/v1/saved_backtests",
+        json_payload=[payload],
+        prefer="return=representation",
+    ) or []
+    if not rows:
+        raise HTTPException(status_code=503, detail="백테스트 결과를 저장하지 못했습니다.")
+    return normalize_value(rows[0])
+
+
+def delete_saved_backtest(account_id: str, saved_backtest_id: int) -> dict[str, Any]:
+    get_saved_backtest(account_id, saved_backtest_id)
+    call_supabase(
+        "DELETE",
+        "/rest/v1/saved_backtests",
+        params={
+            "account_id": f"eq.{account_id}",
+            "id": f"eq.{saved_backtest_id}",
+        },
+    )
+    return {"deleted": True, "id": saved_backtest_id}
+
+
+def create_sentiment_snapshot(
+    ticker: str,
+    market: str = "us",
+    krx_exchange: str = "auto",
+    period_days: int = 7,
+    source_filter: str = "all",
+) -> dict[str, Any]:
     normalized_ticker = normalize_ticker_input(ticker)
     normalized_market, normalized_exchange = validate_market_params(market, krx_exchange)
+    period_days, normalized_source_filter = validate_sentiment_options(period_days, source_filter)
     profile = get_symbol_profile(normalized_ticker, market=normalized_market, krx_exchange=normalized_exchange)
     articles, attempted_queries = gemini_analyzer.get_news_candidates(
         company_name=profile.get("name"),
         ticker=profile.get("resolved_ticker", normalized_ticker),
         market=profile.get("market", normalized_market),
+        period_days=period_days,
+        source_filter=normalized_source_filter,
     )
     if not articles:
         if not gemini_analyzer.NEWS_API_KEY:
             summary = "백엔드에 NEWS_API_KEY가 설정되지 않았습니다."
         else:
-            summary = "국내 종목 뉴스 검색 결과가 없습니다. 회사명과 종목코드로 여러 번 재시도했지만 최신 뉴스를 찾지 못했습니다."
+            summary = (
+                f"최근 {period_days}일 기준으로 뉴스 검색 결과가 없습니다. "
+                "회사명과 종목코드로 여러 번 재시도했지만 최신 뉴스를 찾지 못했습니다."
+            )
         return normalize_value(
             {
                 "ticker": normalized_ticker,
@@ -970,8 +1225,12 @@ def create_sentiment_snapshot(ticker: str, market: str = "us", krx_exchange: str
                 "company_name": profile.get("name"),
                 "sentiment_score": 50,
                 "summary": summary,
+                "investment_implications": "참고할 뉴스가 충분하지 않아 투자 시사점을 따로 분리하지 못했습니다.",
                 "articles": [],
                 "attempted_queries": attempted_queries,
+                "period_days": period_days,
+                "source_filter": normalized_source_filter,
+                "source_filter_label": SENTIMENT_SOURCE_FILTER_LABELS[normalized_source_filter],
                 "news_api_enabled": bool(gemini_analyzer.NEWS_API_KEY),
             }
         )
@@ -983,6 +1242,7 @@ def create_sentiment_snapshot(ticker: str, market: str = "us", krx_exchange: str
         result = {
             "sentiment_score": 50,
             "summary": f"AI 분석을 완료하지 못해 중립 점수로 대체했습니다. 사유: {exc}",
+            "investment_implications": "AI 요약이 실패해 투자 시사점을 분리하지 못했습니다.",
             "articles": articles,
         }
 
@@ -993,6 +1253,9 @@ def create_sentiment_snapshot(ticker: str, market: str = "us", krx_exchange: str
     result["company_name"] = profile.get("name")
     result["articles"] = result.get("articles", articles)
     result["attempted_queries"] = attempted_queries
+    result["period_days"] = period_days
+    result["source_filter"] = normalized_source_filter
+    result["source_filter_label"] = SENTIMENT_SOURCE_FILTER_LABELS[normalized_source_filter]
     result["news_api_enabled"] = bool(gemini_analyzer.NEWS_API_KEY)
     return normalize_value(result)
 
@@ -1997,7 +2260,11 @@ def build_feature_status() -> dict[str, dict[str, str | bool]]:
         },
         "strategy_simulation": {
             "status": "ready",
-            "summary": "단일 백테스트와 전략 최적화 실행이 가능합니다.",
+            "summary": (
+                "단일 백테스트와 전략 최적화 실행이 가능하고, 세션 기반 결과 저장도 사용할 수 있습니다."
+                if is_supabase_configured()
+                else "단일 백테스트와 전략 최적화 실행이 가능합니다. 결과 저장은 Supabase 연결 시 활성화됩니다."
+            ),
             "available": True,
         },
     }
@@ -2368,13 +2635,16 @@ def create_quote_snapshot(ticker: str, market: str = "us", krx_exchange: str = "
 
     end_date = date.today() + timedelta(days=1)
     start_date = end_date - timedelta(days=40)
-    data = get_stock_data(
-        normalized_ticker,
-        start_date.isoformat(),
-        end_date.isoformat(),
-        market=normalized_market,
-        krx_exchange=normalized_exchange,
-    )
+    try:
+        data = get_stock_data(
+            normalized_ticker,
+            start_date.isoformat(),
+            end_date.isoformat(),
+            market=normalized_market,
+            krx_exchange=normalized_exchange,
+        )
+    except MarketDataRateLimitError as exc:
+        raise HTTPException(status_code=503, detail="시세 제공사 요청 제한으로 현재가를 잠시 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.") from exc
     if data.empty or "Close" not in data.columns:
         raise HTTPException(status_code=404, detail=f"{normalized_ticker}의 현재가 데이터를 찾을 수 없습니다.")
 
@@ -2673,6 +2943,44 @@ def closing_bet_notification_dispatch(
     return dispatch_closing_bet_notifications(request.market, request.limit)
 
 
+@app.get("/backtest/saved")
+def saved_backtest_list(
+    account_id: str | None = None,
+    x_app_session: str | None = Header(default=None, alias="X-App-Session"),
+) -> dict[str, Any]:
+    normalized_account_id = resolve_paper_account_id(account_id, x_app_session)
+    return {"items": list_saved_backtests(normalized_account_id)}
+
+
+@app.get("/backtest/saved/{saved_backtest_id}")
+def saved_backtest_detail(
+    saved_backtest_id: int,
+    account_id: str | None = None,
+    x_app_session: str | None = Header(default=None, alias="X-App-Session"),
+) -> dict[str, Any]:
+    normalized_account_id = resolve_paper_account_id(account_id, x_app_session)
+    return {"item": get_saved_backtest(normalized_account_id, saved_backtest_id)}
+
+
+@app.post("/backtest/saved")
+def saved_backtest_create(
+    request: SavedBacktestRequest,
+    x_app_session: str | None = Header(default=None, alias="X-App-Session"),
+) -> dict[str, Any]:
+    request.account_id = resolve_paper_account_id(request.account_id, x_app_session)
+    return {"item": save_backtest_run(request)}
+
+
+@app.delete("/backtest/saved/{saved_backtest_id}")
+def saved_backtest_delete(
+    saved_backtest_id: int,
+    account_id: str | None = None,
+    x_app_session: str | None = Header(default=None, alias="X-App-Session"),
+) -> dict[str, Any]:
+    normalized_account_id = resolve_paper_account_id(account_id, x_app_session)
+    return delete_saved_backtest(normalized_account_id, saved_backtest_id)
+
+
 @app.get("/paper-trading/state")
 def paper_trading_state(
     account_id: str | None = None,
@@ -2701,8 +3009,20 @@ def paper_trading_reset(
 
 
 @app.get("/sentiment/{ticker}")
-def sentiment_analysis(ticker: str, market: str = "us", krx_exchange: str = "auto") -> dict[str, Any]:
-    return create_sentiment_snapshot(ticker, market=market, krx_exchange=krx_exchange)
+def sentiment_analysis(
+    ticker: str,
+    market: str = "us",
+    krx_exchange: str = "auto",
+    period_days: int = 7,
+    source_filter: str = "all",
+) -> dict[str, Any]:
+    return create_sentiment_snapshot(
+        ticker,
+        market=market,
+        krx_exchange=krx_exchange,
+        period_days=period_days,
+        source_filter=source_filter,
+    )
 
 
 @app.post("/backtest/moving_average")

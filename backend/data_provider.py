@@ -5,6 +5,7 @@ from functools import lru_cache
 import io
 from pathlib import Path
 import re
+import time as time_module
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -21,6 +22,7 @@ KRX_SUFFIX_BY_EXCHANGE = {
 KIND_CORP_LIST_URL = "https://kind.krx.co.kr/corpgeneral/corpList.do"
 KRX_CACHE_DIR = Path(__file__).resolve().parent / ".cache"
 KRX_CACHE_FILE = KRX_CACHE_DIR / "krx_listing.csv"
+YF_HISTORY_CACHE_DIR = KRX_CACHE_DIR / "yf_history"
 DEFAULT_REQUEST_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -28,6 +30,14 @@ DEFAULT_REQUEST_HEADERS = {
     ),
     "Referer": "https://kind.krx.co.kr/corpgeneral/corpList.do?method=loadInitPage",
 }
+
+
+class MarketDataProviderError(RuntimeError):
+    pass
+
+
+class MarketDataRateLimitError(MarketDataProviderError):
+    pass
 MARKET_TIMEZONES = {
     "krx": ZoneInfo("Asia/Seoul"),
     "us": ZoneInfo("America/New_York"),
@@ -191,19 +201,150 @@ def get_krx_stock_by_ticker(ticker: str) -> dict[str, str] | None:
     }
 
 
+def is_yfinance_rate_limit_error(error: Exception) -> bool:
+    message = f"{type(error).__name__}: {error}".lower()
+    return "ratelimit" in message or "rate limited" in message or "too many requests" in message
+
+
+def build_history_cache_path(symbol: str) -> Path:
+    normalized_symbol = re.sub(r"[^A-Za-z0-9._-]+", "_", symbol.strip().upper()) or "UNKNOWN"
+    return YF_HISTORY_CACHE_DIR / f"{normalized_symbol}.csv"
+
+
+def load_cached_history(symbol: str) -> pd.DataFrame:
+    cache_path = build_history_cache_path(symbol)
+    if not cache_path.exists():
+        return pd.DataFrame()
+
+    try:
+        cached = pd.read_csv(cache_path, index_col=0, parse_dates=[0])
+    except Exception:
+        return pd.DataFrame()
+
+    if cached.empty:
+        return pd.DataFrame()
+
+    cached.index = pd.to_datetime(cached.index)
+    cached = cached.sort_index()
+    cached.index.name = "Date"
+    return cached
+
+
+def normalize_history_index(frame: pd.DataFrame) -> pd.DataFrame:
+    normalized = frame.copy()
+    normalized.index = pd.to_datetime(normalized.index)
+    if getattr(normalized.index, "tz", None) is not None:
+        normalized.index = normalized.index.tz_localize(None)
+    normalized.index.name = "Date"
+    return normalized
+
+
+def persist_cached_history(symbol: str, raw_data: pd.DataFrame) -> None:
+    if raw_data.empty:
+        return
+
+    cache_path = build_history_cache_path(symbol)
+    YF_HISTORY_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    frame_to_save = normalize_history_index(raw_data)
+
+    existing = load_cached_history(symbol)
+    if not existing.empty:
+        merged = pd.concat([existing, frame_to_save])
+        merged = merged[~merged.index.duplicated(keep="last")].sort_index()
+    else:
+        merged = frame_to_save.sort_index()
+    merged.to_csv(cache_path, encoding="utf-8")
+
+
+def slice_history_window(frame: pd.DataFrame, start_date: str, end_date: str) -> pd.DataFrame:
+    if frame.empty:
+        return pd.DataFrame()
+
+    sliced = normalize_history_index(frame)
+    start_ts = pd.Timestamp(start_date)
+    end_ts = pd.Timestamp(end_date)
+    sliced = sliced.loc[(sliced.index >= start_ts) & (sliced.index < end_ts)].copy()
+    if sliced.empty:
+        return pd.DataFrame()
+    sliced.index.name = "Date"
+    return sliced
+
+
+def load_cached_history_window(symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
+    cached = load_cached_history(symbol)
+    if cached.empty:
+        return pd.DataFrame()
+
+    sliced = slice_history_window(cached, start_date, end_date)
+    if sliced.empty:
+        return pd.DataFrame()
+    sliced.attrs["data_source"] = "yfinance_cache"
+    return sliced
+
+
 def _download_symbol(symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
-    raw_data = yf.download(
-        symbol,
-        start=start_date,
-        end=end_date,
-        auto_adjust=True,
-        progress=False,
-    )
+    cached_fallback = load_cached_history_window(symbol, start_date, end_date)
+    last_error: Exception | None = None
 
-    if isinstance(raw_data.columns, pd.MultiIndex):
-        raw_data.columns = raw_data.columns.get_level_values(0)
+    for attempt in range(2):
+        try:
+            raw_data = yf.download(
+                symbol,
+                start=start_date,
+                end=end_date,
+                auto_adjust=True,
+                progress=False,
+            )
+        except Exception as error:
+            last_error = error
+            if is_yfinance_rate_limit_error(error) and attempt == 0:
+                time_module.sleep(1.0)
+                continue
+            if not cached_fallback.empty:
+                return cached_fallback.copy()
+            if is_yfinance_rate_limit_error(error):
+                raise MarketDataRateLimitError(f"Yahoo Finance rate limit for {symbol}") from error
+            raise
 
-    return raw_data.copy()
+        if isinstance(raw_data.columns, pd.MultiIndex):
+            raw_data.columns = raw_data.columns.get_level_values(0)
+
+        if not raw_data.empty:
+            persist_cached_history(symbol, raw_data)
+            return raw_data.copy()
+
+        try:
+            history_data = yf.Ticker(symbol).history(
+                start=start_date,
+                end=end_date,
+                auto_adjust=True,
+            )
+        except Exception as error:
+            last_error = error
+            if is_yfinance_rate_limit_error(error) and attempt == 0:
+                time_module.sleep(1.0)
+                continue
+            if not cached_fallback.empty:
+                return cached_fallback.copy()
+            if is_yfinance_rate_limit_error(error):
+                raise MarketDataRateLimitError(f"Yahoo Finance rate limit for {symbol}") from error
+            history_data = pd.DataFrame()
+
+        if isinstance(history_data.columns, pd.MultiIndex):
+            history_data.columns = history_data.columns.get_level_values(0)
+
+        if not history_data.empty:
+            persist_cached_history(symbol, history_data)
+            return history_data.copy()
+
+        if not cached_fallback.empty:
+            return cached_fallback.copy()
+
+    if not cached_fallback.empty:
+        return cached_fallback.copy()
+    if last_error and is_yfinance_rate_limit_error(last_error):
+        raise MarketDataRateLimitError(f"Yahoo Finance rate limit for {symbol}") from last_error
+    return pd.DataFrame()
 
 
 def resolve_market_data_cache_bucket(market: str) -> str:
