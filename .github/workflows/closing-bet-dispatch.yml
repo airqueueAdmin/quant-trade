@@ -55,7 +55,9 @@ jobs:
           python - <<'PY'
           import json
           import os
+          import sys
           import urllib.request
+          import urllib.error
 
           market = os.getenv("INPUT_MARKET") or "krx"
           limit = int(os.getenv("INPUT_LIMIT") or "100")
@@ -73,6 +75,8 @@ jobs:
           if notification_id:
               payload["notification_id"] = int(notification_id)
 
+          print("dispatch payload:", json.dumps(payload, ensure_ascii=False))
+
           request = urllib.request.Request(
               url=os.environ["BACKEND_BASE_URL"].rstrip("/") + "/closing-bet/notifications/dispatch",
               data=json.dumps(payload).encode("utf-8"),
@@ -83,7 +87,15 @@ jobs:
               method="POST",
           )
 
-          with urllib.request.urlopen(request, timeout=60) as response:
-              body = response.read().decode("utf-8")
+          try:
+              with urllib.request.urlopen(request, timeout=180) as response:
+                  body = response.read().decode("utf-8")
+                  print(body)
+          except urllib.error.HTTPError as error:
+              body = error.read().decode("utf-8", errors="replace")
               print(body)
+              raise
+          except Exception as error:
+              print(f"dispatch request failed: {error}", file=sys.stderr)
+              raise
           PY
