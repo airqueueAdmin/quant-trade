@@ -1626,7 +1626,7 @@ def format_toss_smart_message_failure_detail(error: dict[str, Any]) -> str:
             f"{detail} "
             f"(app={APPS_IN_TOSS_APP_NAME}, template={TOSS_SMART_MESSAGE_TEMPLATE_CODE}; "
             "확인: Toss 앱 안에서 연 배포본인지, 알림 동의 템플릿과 발송 템플릿이 같은지, "
-            "getAnonymousKey()로 받은 최신 user key인지, 현재 mTLS 인증서가 이 앱에 연결된 인증서인지)"
+            "최신 Toss 로그인 userKey 또는 anonKey를 저장했는지, 현재 mTLS 인증서가 이 앱에 연결된 인증서인지)"
         )
     return detail
 
@@ -1770,9 +1770,9 @@ def log_toss_smart_message_event(event: str, **payload: Any) -> None:
 
 def build_toss_message_recipient_header(recipient_key_type: str, recipient_key: str) -> dict[str, str]:
     if recipient_key_type == "user_key":
-        return {"x-toss-user-key": recipient_key}
+        return {"x-user-key": recipient_key}
     if recipient_key_type == "anonymous_key":
-        return {"x-toss-anonymous-key": recipient_key}
+        return {"x-anon-key": recipient_key}
     raise HTTPException(status_code=400, detail="지원하지 않는 Toss 발송 식별자 타입입니다.")
 
 
