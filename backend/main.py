@@ -613,6 +613,8 @@ class ClosingBetNotificationRequest(PaperTradingAccountRequest):
 class ClosingBetNotificationDispatchRequest(BaseModel):
     market: str | None = Field(default=None)
     limit: int = Field(default=100, ge=1, le=500)
+    notification_id: int | None = Field(default=None, ge=1)
+    force: bool = Field(default=False)
 
     @field_validator("market")
     @classmethod
@@ -2144,7 +2146,12 @@ def test_closing_bet_notification(request: ClosingBetNotificationTestRequest) ->
     return {"sent": True, "channel": request.channel, "destination": request.destination}
 
 
-def dispatch_closing_bet_notifications(market: str | None = None, limit: int = 100) -> dict[str, Any]:
+def dispatch_closing_bet_notifications(
+    market: str | None = None,
+    limit: int = 100,
+    notification_id: int | None = None,
+    force: bool = False,
+) -> dict[str, Any]:
     filters = {
         "active": "eq.true",
         "select": "id,account_id,ticker,market,krx_exchange,channel,destination,threshold_score,last_signal_date,last_notified_at,toss_user_key",
@@ -2153,6 +2160,8 @@ def dispatch_closing_bet_notifications(market: str | None = None, limit: int = 1
     }
     if market:
         filters["market"] = f"eq.{market}"
+    if notification_id is not None:
+        filters["id"] = f"eq.{notification_id}"
 
     subscriptions = call_supabase(
         "GET",
@@ -2170,7 +2179,21 @@ def dispatch_closing_bet_notifications(market: str | None = None, limit: int = 1
             score = int(evaluation.get("total_score") or 0)
             signal_date = str(evaluation.get("signal_date") or "")
             threshold_score = int(item.get("threshold_score")) if item.get("threshold_score") is not None else 0
-            if score < threshold_score:
+            if force:
+                subject, message = format_closing_bet_notification_message(evaluation, threshold_score)
+                send_closing_bet_notification(
+                    item["channel"],
+                    item["destination"],
+                    subject,
+                    message,
+                    evaluation,
+                    account_id=item["account_id"],
+                    notification_id=item["id"],
+                    toss_user_key=item.get("toss_user_key"),
+                )
+                dispatched.append({"id": item["id"], "score": score, "signal_date": signal_date, "forced": True})
+                item["last_notified_at"] = datetime.utcnow().isoformat()
+            elif score < threshold_score:
                 skipped.append({"id": item["id"], "reason": "threshold_not_met", "score": score})
             elif item.get("last_signal_date") == signal_date and item.get("last_notified_at"):
                 skipped.append({"id": item["id"], "reason": "already_notified_for_signal_date", "score": score})
@@ -2209,6 +2232,8 @@ def dispatch_closing_bet_notifications(market: str | None = None, limit: int = 1
     return normalize_value(
         {
             "market": market,
+            "notification_id": notification_id,
+            "force": force,
             "checked": len(subscriptions),
             "sent": len(dispatched),
             "skipped": skipped,
@@ -2940,7 +2965,12 @@ def closing_bet_notification_dispatch(
     x_dispatch_token: str | None = Header(default=None, alias="X-Dispatch-Token"),
 ) -> dict[str, Any]:
     ensure_notification_dispatch_token(x_dispatch_token)
-    return dispatch_closing_bet_notifications(request.market, request.limit)
+    return dispatch_closing_bet_notifications(
+        request.market,
+        request.limit,
+        notification_id=request.notification_id,
+        force=request.force,
+    )
 
 
 @app.get("/backtest/saved")
