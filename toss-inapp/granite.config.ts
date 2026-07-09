@@ -5,7 +5,7 @@ export default defineConfig({
   brand: {
     displayName: '한눈투자',
     primaryColor: '#2f6bff',
-    icon: '',
+    icon: 'https://static.toss.im/appsintoss/55493/7e45fd4d-c4f7-4991-a390-f815534f9719.png',
   },
   web: {
     host: 'localhost',
