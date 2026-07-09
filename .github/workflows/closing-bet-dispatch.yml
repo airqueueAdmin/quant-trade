@@ -1,0 +1,89 @@
+name: Closing Bet Dispatch
+
+on:
+  workflow_dispatch:
+    inputs:
+      market:
+        description: "Market to dispatch"
+        required: true
+        default: "krx"
+        type: choice
+        options:
+          - krx
+          - us
+      limit:
+        description: "Maximum number of subscriptions to scan"
+        required: true
+        default: "100"
+        type: string
+      notification_id:
+        description: "Optional single notification id for targeted tests"
+        required: false
+        default: ""
+        type: string
+      force:
+        description: "Force live send even if already notified or threshold not met"
+        required: true
+        default: false
+        type: boolean
+  schedule:
+    - cron: "2 15 * * 1-5"
+      timezone: "Asia/Seoul"
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate configuration
+        env:
+          BACKEND_BASE_URL: ${{ secrets.CLOSING_BET_BACKEND_BASE_URL }}
+          DISPATCH_TOKEN: ${{ secrets.CLOSING_BET_DISPATCH_TOKEN }}
+        run: |
+          test -n "$BACKEND_BASE_URL"
+          test -n "$DISPATCH_TOKEN"
+
+      - name: Dispatch closing-bet notifications
+        env:
+          BACKEND_BASE_URL: ${{ secrets.CLOSING_BET_BACKEND_BASE_URL }}
+          DISPATCH_TOKEN: ${{ secrets.CLOSING_BET_DISPATCH_TOKEN }}
+          INPUT_MARKET: ${{ inputs.market }}
+          INPUT_LIMIT: ${{ inputs.limit }}
+          INPUT_NOTIFICATION_ID: ${{ inputs.notification_id }}
+          INPUT_FORCE: ${{ inputs.force }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import urllib.request
+
+          market = os.getenv("INPUT_MARKET") or "krx"
+          limit = int(os.getenv("INPUT_LIMIT") or "100")
+          notification_id = (os.getenv("INPUT_NOTIFICATION_ID") or "").strip()
+          force = (os.getenv("INPUT_FORCE") or "").strip().lower() == "true"
+          if os.getenv("EVENT_NAME") == "schedule":
+              force = False
+              notification_id = ""
+
+          payload = {
+              "market": market,
+              "limit": limit,
+              "force": force,
+          }
+          if notification_id:
+              payload["notification_id"] = int(notification_id)
+
+          request = urllib.request.Request(
+              url=os.environ["BACKEND_BASE_URL"].rstrip("/") + "/closing-bet/notifications/dispatch",
+              data=json.dumps(payload).encode("utf-8"),
+              headers={
+                  "Content-Type": "application/json",
+                  "X-Dispatch-Token": os.environ["DISPATCH_TOKEN"],
+              },
+              method="POST",
+          )
+
+          with urllib.request.urlopen(request, timeout=60) as response:
+              body = response.read().decode("utf-8")
+              print(body)
+          PY
