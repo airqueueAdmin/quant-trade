@@ -57,6 +57,7 @@ function formatTradeTime(value?: string | null) {
 
 export function PaperTradingPage() {
   const [session, setSession] = useState<AppSession | null>(() => readStoredSession())
+  const [allowSessionBootstrap, setAllowSessionBootstrap] = useState(() => readStoredSession() === null)
   const [selectedCompany, setSelectedCompany] = useState<KRXSearchResult>(COMMON_KRX_COMPANIES[0])
   const [paperState, setPaperState] = useState<PaperTradingState | null>(null)
   const [sessionLoading, setSessionLoading] = useState(false)
@@ -83,7 +84,7 @@ export function PaperTradingPage() {
     const abortController = new AbortController()
 
     async function ensureSession() {
-      if (session) {
+      if (session || !allowSessionBootstrap) {
         return
       }
 
@@ -102,6 +103,7 @@ export function PaperTradingPage() {
         }
         writeStoredSession(nextSession)
         setSession(nextSession)
+        setAllowSessionBootstrap(false)
       } catch (caughtError) {
         if (abortController.signal.aborted) {
           return
@@ -122,7 +124,7 @@ export function PaperTradingPage() {
 
     void ensureSession()
     return () => abortController.abort()
-  }, [session])
+  }, [allowSessionBootstrap, session])
 
   useEffect(() => {
     const abortController = new AbortController()
@@ -134,7 +136,7 @@ export function PaperTradingPage() {
         return
       }
 
-      setStateLoading(true)
+      setStateLoading(paperState === null)
       setStateError(null)
 
       try {
@@ -146,8 +148,9 @@ export function PaperTradingPage() {
         }
         if (caughtError instanceof ApiError && caughtError.status === 401) {
           clearStoredSession()
+          setAllowSessionBootstrap(false)
           setSession(null)
-          setStateError('연결 정보가 바뀌어 다시 준비하고 있습니다. 잠시 후 다시 시도하세요.')
+          setStateError('연결이 끊겼습니다. 다시 연결해 주세요.')
           setPaperState(null)
           return
         }
@@ -277,6 +280,15 @@ export function PaperTradingPage() {
       disposed = true
     }
   }, [paperState, refreshToken])
+
+  async function handleReconnectSession() {
+    clearStoredSession()
+    setSession(null)
+    setPaperState(null)
+    setStateError(null)
+    setActionMessage(null)
+    setAllowSessionBootstrap(true)
+  }
 
   async function handleSearch() {
     const normalizedQuery = searchQuery.trim()
@@ -451,8 +463,16 @@ export function PaperTradingPage() {
               type="button"
               className="secondary-action"
               onClick={() => setRefreshToken((value) => value + 1)}
+              disabled={!session}
             >
               상태 새로고침
+            </button>
+            <button
+              type="button"
+              className="secondary-action"
+              onClick={() => void handleReconnectSession()}
+            >
+              다시 연결
             </button>
             <button
               type="button"
@@ -473,11 +493,11 @@ export function PaperTradingPage() {
         </div>
 
         {sessionLoading ? <div className="state-box">투자 연습 공간을 준비하는 중입니다...</div> : null}
-        {stateLoading ? <div className="state-box">모의투자 상태를 불러오는 중입니다...</div> : null}
-        {!stateLoading && stateError ? <div className="state-box state-box--error">{stateError}</div> : null}
+        {stateLoading && !paperState ? <div className="state-box">모의투자 상태를 불러오는 중입니다...</div> : null}
+        {stateError ? <div className="state-box state-box--error">{stateError}</div> : null}
         {actionMessage ? <div className="state-box">{actionMessage}</div> : null}
 
-        {!stateLoading && !stateError ? (
+        {paperState && !stateError ? (
           <div className="paper-summary-grid">
             <article className="summary-mini-card">
               <span className="summary-mini-card__label">예수금</span>
