@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { appLogin, env, getAnonymousKey, requestNotificationAgreement } from '@apps-in-toss/web-bridge'
+import { appLogin, getAnonymousKey, requestNotificationAgreement } from '@apps-in-toss/web-bridge'
 
 import { apiClient } from '../../shared/api/client'
 import { ApiError } from '../../shared/api/http'
@@ -512,15 +512,11 @@ export function ClosingBetPage() {
   const [notificationDestination, setNotificationDestination] = useState('')
   const [notificationThreshold, setNotificationThreshold] = useState('0')
   const [tossUserKey, setTossUserKey] = useState<string | null>(null)
-  const [tossRecipientKeyType, setTossRecipientKeyType] = useState<'anonymous_key' | 'user_key' | null>(null)
-  const [tossLoginScope, setTossLoginScope] = useState<string[]>([])
   const [tossLoginConfigured, setTossLoginConfigured] = useState<boolean | null>(null)
   const [tossSmartMessageConfigured, setTossSmartMessageConfigured] = useState<boolean | null>(null)
-  const [tossLoginLoading, setTossLoginLoading] = useState(false)
   const [notificationTemplateCode, setNotificationTemplateCode] = useState(DEFAULT_TOSS_TEMPLATE_CODE)
   const [notificationAgreementReady, setNotificationAgreementReady] = useState(false)
   const [savingNotification, setSavingNotification] = useState(false)
-  const [testingNotification, setTestingNotification] = useState(false)
   const [deletingNotificationId, setDeletingNotificationId] = useState<number | null>(null)
 
   const hasAnalysis = quote !== null || sentiment !== null || sectorSnapshot !== null || stockRows.length > 0
@@ -571,13 +567,11 @@ export function ClosingBetPage() {
     const anonymousKeyResult = await getAnonymousKey()
     if (anonymousKeyResult && anonymousKeyResult !== 'ERROR' && anonymousKeyResult.type === 'HASH') {
       setTossUserKey(anonymousKeyResult.hash)
-      setTossRecipientKeyType('anonymous_key')
-      setTossLoginScope([])
       return anonymousKeyResult.hash
     }
 
     if (tossLoginConfigured === false) {
-      throw new Error('토스 로그인 연동이 없고 anonKey도 가져오지 못했습니다.')
+      throw new Error('알림 설정을 준비하지 못했습니다. 잠시 후 다시 시도하세요.')
     }
 
     const loginResult = await appLogin()
@@ -590,8 +584,6 @@ export function ClosingBetPage() {
       referrer: loginResult.referrer,
     }, session?.sessionToken)
     setTossUserKey(response.user_key)
-    setTossRecipientKeyType('user_key')
-    setTossLoginScope(response.scope_list)
     return response.user_key
   }
 
@@ -667,7 +659,7 @@ export function ClosingBetPage() {
         if (abortController.signal.aborted) {
           return
         }
-        setNotificationError(friendlyApiError(caughtError, '알림 세션을 준비하지 못했습니다.'))
+        setNotificationError(friendlyApiError(caughtError, '알림을 준비하지 못했습니다.'))
       }
     }
 
@@ -700,7 +692,7 @@ export function ClosingBetPage() {
           setSession(null)
           setNotifications([])
           setAlerts([])
-          setNotificationError('알림 세션이 만료되어 다시 연결 중입니다.')
+          setNotificationError('알림 화면을 다시 불러오고 있습니다.')
           return
         }
         setNotificationError(friendlyApiError(caughtError, '알림 구독 목록을 불러오지 못했습니다.'))
@@ -827,7 +819,7 @@ export function ClosingBetPage() {
 
   async function handleSaveNotification() {
     if (!session) {
-      setNotificationError('알림 세션을 준비 중입니다. 잠시 후 다시 시도하세요.')
+      setNotificationError('알림 화면을 준비 중입니다. 잠시 후 다시 시도하세요.')
       return
     }
 
@@ -840,7 +832,7 @@ export function ClosingBetPage() {
       return
     }
     if (!normalizedDestination) {
-      setNotificationError(notificationChannel === 'email' ? '이메일 주소를 입력하세요.' : '토스 앱 알림 메모를 입력하세요.')
+      setNotificationError(notificationChannel === 'email' ? '이메일 주소를 입력하세요.' : '알림 이름을 입력하세요.')
       return
     }
     if (!Number.isFinite(threshold) || threshold < 0 || threshold > 100) {
@@ -873,7 +865,7 @@ export function ClosingBetPage() {
         return [response.subscription, ...others]
       })
       await refreshNotificationCenter(session)
-      setNotificationMessage(`${channelLabel(notificationChannel)} 알림 구독을 저장했습니다.`)
+      setNotificationMessage('알림을 저장했습니다.')
     } catch (caughtError) {
       setNotificationError(friendlyApiError(caughtError, '알림 구독 저장에 실패했습니다.'))
     } finally {
@@ -881,66 +873,9 @@ export function ClosingBetPage() {
     }
   }
 
-  async function handleTestNotification() {
-    const normalizedDestination = notificationDestination.trim()
-    const normalizedTicker = normalizeTicker(ticker, market) || defaultTicker(market)
-
-    if (!normalizedDestination) {
-      setNotificationError(notificationChannel === 'email' ? '이메일 주소를 입력하세요.' : '토스 앱 알림 메모를 입력하세요.')
-      return
-    }
-
-    setTestingNotification(true)
-    setNotificationError(null)
-    setNotificationMessage(null)
-    try {
-      let nextTossUserKey: string | undefined
-      let deploymentId: string | undefined
-      if (notificationChannel === 'toss_inapp') {
-        nextTossUserKey = await ensureTossRecipientKey()
-        await ensureNotificationAgreement()
-        deploymentId = env.getDeploymentId()
-      }
-      await apiClient.closingBetNotificationTest({
-        channel: notificationChannel,
-        destination: normalizedDestination,
-        toss_user_key: nextTossUserKey,
-        deployment_id: deploymentId,
-        ticker: normalizedTicker,
-        market,
-      }, session?.sessionToken)
-      if (session) {
-        await refreshNotificationCenter(session)
-      }
-      setNotificationMessage(`${channelLabel(notificationChannel)} 테스트 알림을 발송했습니다.`)
-    } catch (caughtError) {
-      setNotificationError(friendlyApiError(caughtError, '테스트 알림 발송에 실패했습니다.'))
-    } finally {
-      setTestingNotification(false)
-    }
-  }
-
-  async function handleConnectTossLogin() {
-    setTossLoginLoading(true)
-    setNotificationError(null)
-    setNotificationMessage(null)
-    try {
-      const recipientKey = await ensureTossRecipientKey()
-      setNotificationMessage(
-        tossRecipientKeyType === 'anonymous_key' || (recipientKey && !/^\d+$/.test(recipientKey))
-          ? '토스 anonKey를 연결했습니다.'
-          : '토스 로그인 userKey를 연결했습니다.',
-      )
-    } catch (caughtError) {
-      setNotificationError(friendlyApiError(caughtError, '토스 로그인 연결에 실패했습니다.'))
-    } finally {
-      setTossLoginLoading(false)
-    }
-  }
-
   async function handleDeleteNotification(notificationId: number) {
     if (!session) {
-      setNotificationError('알림 세션을 준비 중입니다. 잠시 후 다시 시도하세요.')
+      setNotificationError('알림 화면을 준비 중입니다. 잠시 후 다시 시도하세요.')
       return
     }
 
@@ -960,7 +895,7 @@ export function ClosingBetPage() {
 
   async function handleReadAlert(alertId: number) {
     if (!session) {
-      setNotificationError('알림 세션을 준비 중입니다. 잠시 후 다시 시도하세요.')
+      setNotificationError('알림 화면을 준비 중입니다. 잠시 후 다시 시도하세요.')
       return
     }
 
@@ -1196,7 +1131,7 @@ export function ClosingBetPage() {
         <div className="content-panel content-panel--nested">
           <p className="content-panel__eyebrow">알림 설정</p>
           <p className="content-panel__description">
-            카카오 대신 Toss in-app 안에서 확인하는 알림함 기준으로 설계했습니다. 이메일도 함께 둘 수 있습니다.
+            관심 종목을 저장해두면 조건을 만족했을 때 토스 앱이나 이메일로 알려드립니다.
           </p>
 
           <div className="field-grid field-grid--single-when-narrow">
@@ -1217,7 +1152,7 @@ export function ClosingBetPage() {
 
             <div>
               <label className="field-label" htmlFor="closing-bet-notification-destination">
-                {notificationChannel === 'email' ? '수신 이메일' : '알림 메모'}
+                {notificationChannel === 'email' ? '받을 이메일' : '알림 이름'}
               </label>
               <input
                 id="closing-bet-notification-destination"
@@ -1227,7 +1162,7 @@ export function ClosingBetPage() {
                 placeholder={
                   notificationChannel === 'email'
                     ? 'me@example.com'
-                    : '예: 종가 후보 즉시 확인'
+                    : '예: 삼성전자 종가 알림'
                 }
               />
             </div>
@@ -1247,70 +1182,29 @@ export function ClosingBetPage() {
                 placeholder="0"
               />
             </div>
-            {notificationChannel === 'toss_inapp' ? (
-              <div className="summary-card">
-                <p className="summary-card__label">토스 발송 식별 키</p>
-                <strong className="summary-card__value">{tossUserKey ? '연결됨' : '연결 필요'}</strong>
-                <p className="summary-card__text">
-                  {tossSmartMessageConfigured === false
-                    ? '백엔드에 Apps in Toss 스마트 발송 설정이 없어 실제 발송은 동작하지 않습니다.'
-                    : tossRecipientKeyType === 'anonymous_key'
-                      ? '현재 스마트 발송용 anonKey를 확보했습니다.'
-                      : tossUserKey
-                        ? `현재 스마트 발송용 userKey를 확보했습니다. scope: ${tossLoginScope.join(', ') || '미확인'}`
-                        : '가능하면 anonKey를 먼저 사용하고, 실패하면 토스 로그인 userKey를 대체로 사용합니다.'}
-                </p>
-                <div className="input-action-row input-action-row--wide">
-                  <button
-                    type="button"
-                    className="secondary-action"
-                    onClick={() => void handleConnectTossLogin()}
-                    disabled={tossLoginLoading}
-                  >
-                    {tossLoginLoading
-                      ? '토스 식별 키 연결 중...'
-                      : tossUserKey
-                        ? '토스 식별 키 다시 연결'
-                        : '토스 식별 키 연결'}
-                  </button>
-                </div>
-              </div>
-            ) : null}
             <div className="input-action-row input-action-row--stacked">
-              <button
-                type="button"
-                className="secondary-action"
-                onClick={() => void handleTestNotification()}
-                disabled={testingNotification || (notificationChannel === 'toss_inapp' && tossSmartMessageConfigured === false)}
-              >
-                {testingNotification
-                  ? '테스트 발송 중...'
-                  : notificationChannel === 'toss_inapp'
-                    ? '토스 앱 알림 도착 테스트'
-                    : '이메일 테스트'}
-              </button>
               <button
                 type="button"
                 className="primary-action"
                 onClick={() => void handleSaveNotification()}
                 disabled={savingNotification || (notificationChannel === 'toss_inapp' && tossSmartMessageConfigured === false)}
               >
-                {savingNotification ? '저장 중...' : '현재 종목으로 알림 저장'}
+                {savingNotification ? '저장 중...' : '알림 저장'}
               </button>
             </div>
           </div>
 
           {notificationMessage ? <div className="state-box">{notificationMessage}</div> : null}
           {notificationError ? <div className="state-box state-box--error">{notificationError}</div> : null}
-          {notificationLoading ? <div className="state-box">알림 구독과 알림함을 불러오는 중입니다...</div> : null}
+          {notificationLoading ? <div className="state-box">알림 목록을 불러오는 중입니다...</div> : null}
 
           <div className="section-block">
             <div className="section-block__header">
-              <h3>내 알림 구독</h3>
+              <h3>저장한 알림</h3>
             </div>
             <div className="sector-list">
               {notifications.length === 0 ? (
-                <div className="state-box">저장된 알림 구독이 없습니다.</div>
+                <div className="state-box">저장한 알림이 없습니다.</div>
               ) : (
                 notifications.map((item) => (
                   <article key={item.id} className="sector-list__item">
@@ -1343,7 +1237,7 @@ export function ClosingBetPage() {
 
           <div className="section-block">
             <div className="section-block__header">
-              <h3>토스 앱 알림함</h3>
+              <h3>최근 받은 알림</h3>
             </div>
             <div className="sector-list">
               {alerts.length === 0 ? (
@@ -1355,7 +1249,7 @@ export function ClosingBetPage() {
                       <div>
                         <h4 className="sector-list__title">{item.title}</h4>
                         <p className="sector-list__subtitle">
-                          {item.total_score ?? '-'}점 / {formatDate(item.signal_date ?? undefined)} / {item.is_read ? '읽음' : '안읽음'}
+                          {item.total_score ?? '-'}점 / {formatDate(item.signal_date ?? undefined)} / {item.is_read ? '읽음' : '읽지 않음'}
                         </p>
                       </div>
                       {!item.is_read ? (

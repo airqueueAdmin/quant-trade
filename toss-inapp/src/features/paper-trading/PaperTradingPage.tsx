@@ -78,7 +78,6 @@ export function PaperTradingPage() {
   const [actionMessage, setActionMessage] = useState<string | null>(null)
 
   const commonKrxCompanies = useMemo(() => COMMON_KRX_COMPANIES, [])
-  const accountId = session?.accountId ?? '-'
 
   useEffect(() => {
     const abortController = new AbortController()
@@ -362,20 +361,6 @@ export function PaperTradingPage() {
     }
   }
 
-  async function handleCopyAccountId() {
-    if (typeof navigator === 'undefined' || !navigator.clipboard) {
-      setActionMessage('이 환경에서는 계좌 ID 복사를 지원하지 않습니다.')
-      return
-    }
-
-    try {
-      await navigator.clipboard.writeText(accountId)
-      setActionMessage('내 투자 연습 ID를 복사했습니다.')
-    } catch {
-      setActionMessage('계좌 ID를 복사하지 못했습니다.')
-    }
-  }
-
   async function handleSubmitOrder() {
     if (!session) {
       setActionMessage('내 투자 연습 공간이 준비된 뒤 다시 시도하세요.')
@@ -455,21 +440,13 @@ export function PaperTradingPage() {
       <section className="content-panel">
         <div className="account-strip">
           <div>
-            <p className="account-strip__label">현재 연결된 투자 연습 계정</p>
-            <strong className="account-strip__value">{accountId}</strong>
+            <p className="account-strip__label">투자 연습 공간</p>
+            <strong className="account-strip__value">이 기기에서 이어서 사용 중</strong>
             <p className="account-strip__description">
-              이 기기에서 이어서 사용할 수 있는 투자 연습 계정입니다. 같은 브라우저에서는
-              이전 연습 기록과 자산 상태를 그대로 이어서 볼 수 있습니다.
+              같은 기기에서는 이전 연습 기록과 자산 상태를 이어서 확인할 수 있습니다.
             </p>
           </div>
           <div className="paper-actions">
-            <button
-              type="button"
-              className="secondary-action"
-              onClick={() => void handleCopyAccountId()}
-            >
-              ID 복사
-            </button>
             <button
               type="button"
               className="secondary-action"
