@@ -224,7 +224,15 @@ def load_cached_history(symbol: str) -> pd.DataFrame:
     if cached.empty:
         return pd.DataFrame()
 
-    cached.index = pd.to_datetime(cached.index)
+    cached.index = pd.to_datetime(cached.index, errors="coerce")
+    cached = cached[~cached.index.isna()].copy()
+    if cached.empty:
+        try:
+            cache_path.unlink()
+        except OSError:
+            pass
+        return pd.DataFrame()
+
     cached = cached.sort_index()
     cached.index.name = "Date"
     return cached
@@ -232,7 +240,10 @@ def load_cached_history(symbol: str) -> pd.DataFrame:
 
 def normalize_history_index(frame: pd.DataFrame) -> pd.DataFrame:
     normalized = frame.copy()
-    normalized.index = pd.to_datetime(normalized.index)
+    normalized.index = pd.to_datetime(normalized.index, errors="coerce")
+    normalized = normalized[~normalized.index.isna()].copy()
+    if normalized.empty:
+        return normalized
     if getattr(normalized.index, "tz", None) is not None:
         normalized.index = normalized.index.tz_localize(None)
     normalized.index.name = "Date"
