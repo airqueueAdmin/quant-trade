@@ -123,6 +123,13 @@ def mask_toss_user_key(value: str | None) -> str | None:
     return f"{normalized[:6]}***"
 
 
+def infer_toss_recipient_key_type(recipient_key: str) -> str:
+    normalized = recipient_key.strip()
+    if not normalized:
+        raise HTTPException(status_code=400, detail="Toss 발송 식별 키가 비어 있습니다.")
+    return "user_key" if normalized.isdigit() else "anonymous_key"
+
+
 APPS_IN_TOSS_APP_NAME = (os.getenv("APPS_IN_TOSS_APP_NAME") or "glance-invest").strip() or "glance-invest"
 DEFAULT_CORS_ORIGINS = [
     "http://localhost:4173",
@@ -1941,9 +1948,11 @@ def send_toss_smart_test_message(
     notification_id: int | None = None,
 ) -> dict[str, Any]:
     subject, message = format_closing_bet_notification_message(evaluation, int(evaluation.get("total_score") or 0))
+    recipient_key_type = infer_toss_recipient_key_type(recipient_key)
     result = call_toss_smart_message_api(
         "/api-partner/v1/apps-in-toss/messenger/send-test-message",
         recipient_key=recipient_key,
+        recipient_key_type=recipient_key_type,
         payload={
             "templateSetCode": TOSS_SMART_MESSAGE_TEMPLATE_CODE,
             "deploymentId": deployment_id,
@@ -1962,9 +1971,11 @@ def send_toss_smart_message(
     notification_id: int | None = None,
 ) -> dict[str, Any]:
     subject, message = format_closing_bet_notification_message(evaluation, int(evaluation.get("total_score") or 0))
+    recipient_key_type = infer_toss_recipient_key_type(recipient_key)
     result = call_toss_smart_message_api(
         "/api-partner/v1/apps-in-toss/messenger/send-message",
         recipient_key=recipient_key,
+        recipient_key_type=recipient_key_type,
         payload={
             "templateSetCode": TOSS_SMART_MESSAGE_TEMPLATE_CODE,
             "context": build_toss_smart_message_context(evaluation),

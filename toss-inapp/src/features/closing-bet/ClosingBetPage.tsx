@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { appLogin, env, requestNotificationAgreement } from '@apps-in-toss/web-bridge'
+import { appLogin, env, getAnonymousKey, requestNotificationAgreement } from '@apps-in-toss/web-bridge'
 
 import { apiClient } from '../../shared/api/client'
 import { ApiError } from '../../shared/api/http'
@@ -512,8 +512,10 @@ export function ClosingBetPage() {
   const [notificationDestination, setNotificationDestination] = useState('')
   const [notificationThreshold, setNotificationThreshold] = useState('0')
   const [tossUserKey, setTossUserKey] = useState<string | null>(null)
+  const [tossRecipientKeyType, setTossRecipientKeyType] = useState<'anonymous_key' | 'user_key' | null>(null)
   const [tossLoginScope, setTossLoginScope] = useState<string[]>([])
   const [tossLoginConfigured, setTossLoginConfigured] = useState<boolean | null>(null)
+  const [tossSmartMessageConfigured, setTossSmartMessageConfigured] = useState<boolean | null>(null)
   const [tossLoginLoading, setTossLoginLoading] = useState(false)
   const [notificationTemplateCode, setNotificationTemplateCode] = useState(DEFAULT_TOSS_TEMPLATE_CODE)
   const [notificationAgreementReady, setNotificationAgreementReady] = useState(false)
@@ -561,12 +563,21 @@ export function ClosingBetPage() {
     setAlerts(alertResponse.items)
   }
 
-  async function ensureTossUserKey() {
+  async function ensureTossRecipientKey() {
     if (tossUserKey) {
       return tossUserKey
     }
+
+    const anonymousKeyResult = await getAnonymousKey()
+    if (anonymousKeyResult && anonymousKeyResult !== 'ERROR' && anonymousKeyResult.type === 'HASH') {
+      setTossUserKey(anonymousKeyResult.hash)
+      setTossRecipientKeyType('anonymous_key')
+      setTossLoginScope([])
+      return anonymousKeyResult.hash
+    }
+
     if (tossLoginConfigured === false) {
-      throw new Error('토스 로그인 연동 설정이 아직 완료되지 않았습니다.')
+      throw new Error('토스 로그인 연동이 없고 anonKey도 가져오지 못했습니다.')
     }
 
     const loginResult = await appLogin()
@@ -579,6 +590,7 @@ export function ClosingBetPage() {
       referrer: loginResult.referrer,
     }, session?.sessionToken)
     setTossUserKey(response.user_key)
+    setTossRecipientKeyType('user_key')
     setTossLoginScope(response.scope_list)
     return response.user_key
   }
@@ -621,6 +633,7 @@ export function ClosingBetPage() {
         }
         if (!abortController.signal.aborted) {
           setTossLoginConfigured(response.toss_login?.configured ?? false)
+          setTossSmartMessageConfigured(response.toss_smart_message?.configured ?? false)
         }
       } catch {
         // Keep the local fallback when app config cannot be fetched.
@@ -842,7 +855,7 @@ export function ClosingBetPage() {
     try {
       let nextTossUserKey: string | undefined
       if (notificationChannel === 'toss_inapp') {
-        nextTossUserKey = await ensureTossUserKey()
+        nextTossUserKey = await ensureTossRecipientKey()
         await ensureNotificationAgreement()
       }
       const response = await apiClient.closingBetNotificationUpsert(session.sessionToken, {
@@ -884,7 +897,7 @@ export function ClosingBetPage() {
       let nextTossUserKey: string | undefined
       let deploymentId: string | undefined
       if (notificationChannel === 'toss_inapp') {
-        nextTossUserKey = await ensureTossUserKey()
+        nextTossUserKey = await ensureTossRecipientKey()
         await ensureNotificationAgreement()
         deploymentId = env.getDeploymentId()
       }
@@ -912,8 +925,12 @@ export function ClosingBetPage() {
     setNotificationError(null)
     setNotificationMessage(null)
     try {
-      await ensureTossUserKey()
-      setNotificationMessage('토스 로그인 userKey를 연결했습니다.')
+      const recipientKey = await ensureTossRecipientKey()
+      setNotificationMessage(
+        tossRecipientKeyType === 'anonymous_key' || (recipientKey && !/^\d+$/.test(recipientKey))
+          ? '토스 anonKey를 연결했습니다.'
+          : '토스 로그인 userKey를 연결했습니다.',
+      )
     } catch (caughtError) {
       setNotificationError(friendlyApiError(caughtError, '토스 로그인 연결에 실패했습니다.'))
     } finally {
@@ -1232,27 +1249,29 @@ export function ClosingBetPage() {
             </div>
             {notificationChannel === 'toss_inapp' ? (
               <div className="summary-card">
-                <p className="summary-card__label">토스 로그인 userKey</p>
+                <p className="summary-card__label">토스 발송 식별 키</p>
                 <strong className="summary-card__value">{tossUserKey ? '연결됨' : '연결 필요'}</strong>
                 <p className="summary-card__text">
-                  {tossLoginConfigured === false
-                    ? '백엔드에 Apps in Toss mTLS 인증서 설정이 없어 userKey를 가져올 수 없습니다.'
-                    : tossUserKey
-                      ? `현재 스마트 발송용 userKey를 확보했습니다. scope: ${tossLoginScope.join(', ') || '미확인'}`
-                      : '현재는 토스 로그인 userKey가 필요합니다. 추후 anon-key 발송 지원 시 이 단계는 단순화될 수 있습니다.'}
+                  {tossSmartMessageConfigured === false
+                    ? '백엔드에 Apps in Toss 스마트 발송 설정이 없어 실제 발송은 동작하지 않습니다.'
+                    : tossRecipientKeyType === 'anonymous_key'
+                      ? '현재 스마트 발송용 anonKey를 확보했습니다.'
+                      : tossUserKey
+                        ? `현재 스마트 발송용 userKey를 확보했습니다. scope: ${tossLoginScope.join(', ') || '미확인'}`
+                        : '가능하면 anonKey를 먼저 사용하고, 실패하면 토스 로그인 userKey를 대체로 사용합니다.'}
                 </p>
                 <div className="input-action-row input-action-row--wide">
                   <button
                     type="button"
                     className="secondary-action"
                     onClick={() => void handleConnectTossLogin()}
-                    disabled={tossLoginLoading || tossLoginConfigured === false}
+                    disabled={tossLoginLoading}
                   >
                     {tossLoginLoading
-                      ? '토스 로그인 연결 중...'
+                      ? '토스 식별 키 연결 중...'
                       : tossUserKey
-                        ? '토스 로그인 다시 연결'
-                        : '토스 로그인 연결'}
+                        ? '토스 식별 키 다시 연결'
+                        : '토스 식별 키 연결'}
                   </button>
                 </div>
               </div>
@@ -1262,7 +1281,7 @@ export function ClosingBetPage() {
                 type="button"
                 className="secondary-action"
                 onClick={() => void handleTestNotification()}
-                disabled={testingNotification || (notificationChannel === 'toss_inapp' && tossLoginConfigured === false)}
+                disabled={testingNotification || (notificationChannel === 'toss_inapp' && tossSmartMessageConfigured === false)}
               >
                 {testingNotification
                   ? '테스트 발송 중...'
@@ -1274,7 +1293,7 @@ export function ClosingBetPage() {
                 type="button"
                 className="primary-action"
                 onClick={() => void handleSaveNotification()}
-                disabled={savingNotification || (notificationChannel === 'toss_inapp' && tossLoginConfigured === false)}
+                disabled={savingNotification || (notificationChannel === 'toss_inapp' && tossSmartMessageConfigured === false)}
               >
                 {savingNotification ? '저장 중...' : '현재 종목으로 알림 저장'}
               </button>
