@@ -2357,7 +2357,7 @@ def trim_series_to_cutoff(series: pd.Series, cutoff_date: date) -> pd.Series:
     if series.empty:
         return series
     index = pd.to_datetime(series.index)
-    return series.loc[index.normalize() <= pd.Timestamp(cutoff_date)].copy()
+    return series.loc[index.date <= cutoff_date].copy()
 
 
 def calculate_return_pct(series: pd.Series, lookback: int) -> float | None:
