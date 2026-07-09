@@ -24,8 +24,11 @@ on:
       force:
         description: "Force live send even if already notified or threshold not met"
         required: true
-        default: false
-        type: boolean
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
   schedule:
     - cron: "2 15 * * 1-5"
       timezone: "Asia/Seoul"
