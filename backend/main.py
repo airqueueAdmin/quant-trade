@@ -27,6 +27,7 @@ from dotenv import load_dotenv
 from backtester import backtest_buy_and_hold, backtest_strategy
 from data_provider import (
     MarketDataRateLimitError,
+    coerce_datetime_index,
     get_stock_data,
     get_symbol_profile,
     search_krx_stocks,
@@ -2392,8 +2393,19 @@ def describe_sector_snapshot_status(market: str, now: datetime | None = None) ->
 def trim_series_to_cutoff(series: pd.Series, cutoff_date: date) -> pd.Series:
     if series.empty:
         return series
-    index = pd.to_datetime(series.index)
-    return series.loc[index.date <= cutoff_date].copy()
+    normalized = normalize_close_series_index(series)
+    return normalized.loc[normalized.index.date <= cutoff_date].copy()
+
+
+def normalize_close_series_index(series: pd.Series) -> pd.Series:
+    normalized = series.copy()
+    normalized.index = coerce_datetime_index(normalized.index)
+    normalized = normalized[~normalized.index.isna()].copy()
+    if normalized.empty:
+        return normalized
+    normalized = normalized[~normalized.index.duplicated(keep="last")].sort_index()
+    normalized.index.name = "Date"
+    return normalized
 
 
 def calculate_return_pct(series: pd.Series, lookback: int) -> float | None:
@@ -2471,7 +2483,7 @@ def load_close_series(
     if data.empty or "Close" not in data.columns:
         return pd.Series(dtype=float)
 
-    series = data["Close"].dropna().astype(float).copy()
+    series = normalize_close_series_index(data["Close"].dropna().astype(float))
     if cutoff_date is not None:
         series = trim_series_to_cutoff(series, cutoff_date)
     return series
@@ -2480,7 +2492,7 @@ def load_close_series(
 def build_equal_weight_basket(component_series: list[pd.Series]) -> pd.Series:
     normalized_series: list[pd.Series] = []
     for index, series in enumerate(component_series):
-        clean = series.dropna().astype(float)
+        clean = normalize_close_series_index(series.dropna().astype(float))
         if len(clean) < 2:
             continue
         normalized = (clean / float(clean.iloc[0])) * 100.0

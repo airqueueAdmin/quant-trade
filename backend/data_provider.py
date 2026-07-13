@@ -224,8 +224,7 @@ def load_cached_history(symbol: str) -> pd.DataFrame:
     if cached.empty:
         return pd.DataFrame()
 
-    cached.index = pd.to_datetime(cached.index, errors="coerce")
-    cached = cached[~cached.index.isna()].copy()
+    cached = normalize_history_index(cached)
     if cached.empty:
         try:
             cache_path.unlink()
@@ -233,19 +232,36 @@ def load_cached_history(symbol: str) -> pd.DataFrame:
             pass
         return pd.DataFrame()
 
-    cached = cached.sort_index()
     cached.index.name = "Date"
     return cached
 
 
+def coerce_datetime_index(index: pd.Index) -> pd.DatetimeIndex:
+    values: list[pd.Timestamp] = []
+    for value in index:
+        try:
+            timestamp = pd.Timestamp(value)
+        except (TypeError, ValueError):
+            values.append(pd.NaT)
+            continue
+
+        if pd.isna(timestamp):
+            values.append(pd.NaT)
+        elif timestamp.tzinfo is not None:
+            values.append(timestamp.tz_localize(None))
+        else:
+            values.append(timestamp)
+
+    return pd.DatetimeIndex(values)
+
+
 def normalize_history_index(frame: pd.DataFrame) -> pd.DataFrame:
     normalized = frame.copy()
-    normalized.index = pd.to_datetime(normalized.index, errors="coerce")
+    normalized.index = coerce_datetime_index(normalized.index)
     normalized = normalized[~normalized.index.isna()].copy()
     if normalized.empty:
         return normalized
-    if getattr(normalized.index, "tz", None) is not None:
-        normalized.index = normalized.index.tz_localize(None)
+    normalized = normalized[~normalized.index.duplicated(keep="last")].sort_index()
     normalized.index.name = "Date"
     return normalized
 
@@ -321,6 +337,7 @@ def _download_symbol(symbol: str, start_date: str, end_date: str) -> pd.DataFram
             raw_data.columns = raw_data.columns.get_level_values(0)
 
         if not raw_data.empty:
+            raw_data = normalize_history_index(raw_data)
             persist_cached_history(symbol, raw_data)
             return raw_data.copy()
 
@@ -345,6 +362,7 @@ def _download_symbol(symbol: str, start_date: str, end_date: str) -> pd.DataFram
             history_data.columns = history_data.columns.get_level_values(0)
 
         if not history_data.empty:
+            history_data = normalize_history_index(history_data)
             persist_cached_history(symbol, history_data)
             return history_data.copy()
 
