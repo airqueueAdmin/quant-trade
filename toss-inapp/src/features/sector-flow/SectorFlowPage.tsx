@@ -109,8 +109,7 @@ export function SectorFlowPage() {
         <p className="content-panel__eyebrow">종가베팅 1단계</p>
         <h2 className="content-panel__title">주요 섹터 흐름</h2>
         <p className="content-panel__description">
-          종가베팅 전에 오늘 시장에서 끝까지 강했던 섹터를 먼저 추리는 흐름 확인
-          서포트 화면입니다.
+          오늘 강한 섹터와 추세를 비교합니다.
         </p>
       </section>
 
@@ -143,7 +142,7 @@ export function SectorFlowPage() {
         </div>
 
         <p className="helper-text">
-          미국은 대표 섹터 ETF 기준, 국내는 대표 종목 바스켓 기준으로 계산합니다.
+          미국은 섹터 ETF, 국내는 대표 종목 기준입니다.
         </p>
 
         {loading ? <div className="state-box">섹터 흐름을 불러오는 중입니다...</div> : null}
@@ -248,9 +247,8 @@ export function SectorFlowPage() {
             <div className="content-panel content-panel--nested">
               <p className="content-panel__eyebrow">해석 기준</p>
               <ul className="bullet-list">
-                <li>1개월, 3개월 수익률이 높고 20일선과 60일선 위에 있으면 상대적으로 강한 섹터로 봅니다.</li>
-                <li>추세 점수는 1일, 1주, 1개월, 3개월 수익률을 가중합한 값입니다.</li>
-                <li>국내 섹터는 ETF가 아니라 대표 종목 바스켓 기준이라 업종 전체와 완전히 같지는 않습니다.</li>
+                <li>수익률과 20·60일선 위치로 강도를 판단합니다.</li>
+                <li>국내 결과는 대표 종목 기준입니다.</li>
               </ul>
             </div>
           </>

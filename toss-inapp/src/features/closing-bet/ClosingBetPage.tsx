@@ -412,7 +412,7 @@ function deriveRiskFlags(
   rows: StockHistoryRow[],
   match: SectorRow | null,
   sentiment: SentimentResult | null,
-  scenario: (typeof QUICK_SCENARIOS)[number],
+  scenario: (typeof QUICK_SCENARIOS)[number] | null,
   scores: Record<string, number>,
 ) {
   const flags: string[] = []
@@ -501,7 +501,7 @@ export function ClosingBetPage() {
   const [sectorSnapshot, setSectorSnapshot] = useState<SectorSnapshot | null>(null)
   const [resolvedSector, setResolvedSector] = useState<SectorRow | null>(null)
   const [stockRows, setStockRows] = useState<StockHistoryRow[]>([])
-  const [scenario, setScenario] = useState<(typeof QUICK_SCENARIOS)[number]>(QUICK_SCENARIOS[1])
+  const [scenario, setScenario] = useState<(typeof QUICK_SCENARIOS)[number] | null>(null)
   const [scores, setScores] = useState(INITIAL_SCORES)
   const [notifications, setNotifications] = useState<ClosingBetNotification[]>([])
   const [alerts, setAlerts] = useState<ClosingBetAlertEvent[]>([])
@@ -533,11 +533,11 @@ export function ClosingBetPage() {
         scores.newsFollowThrough * 0.1 +
         scores.tomorrowCatalyst * 0.05 +
         scores.riskControl * 0.05 +
-        SCENARIO_MODIFIERS[scenario],
+        (scenario ? SCENARIO_MODIFIERS[scenario] : 0),
     )
   }, [hasAnalysis, scenario, scores])
 
-  const tone = scoreTone(totalScore)
+  const tone = hasAnalysis ? scoreTone(totalScore) : 'neutral'
   const tickerLabel = normalizeTicker(ticker, market) || defaultTicker(market)
   const riskFlags = useMemo(
     () => deriveRiskFlags(stockRows, resolvedSector, sentiment, scenario, scores),
@@ -549,6 +549,16 @@ export function ClosingBetPage() {
     () => searchLocalKrxCompanies(searchQuery, commonKrxCompanies),
     [commonKrxCompanies, searchQuery],
   )
+
+  function resetAnalysis() {
+    setQuote(null)
+    setSentiment(null)
+    setSectorSnapshot(null)
+    setResolvedSector(null)
+    setStockRows([])
+    setScenario(null)
+    setScores(INITIAL_SCORES)
+  }
 
   async function refreshNotificationCenter(sessionValue: AppSession, signal?: AbortSignal) {
     const [notificationResponse, alertResponse] = await Promise.all([
@@ -758,6 +768,7 @@ export function ClosingBetPage() {
   function handlePickCompany(company: KRXSearchResult) {
     setTicker(company.ticker)
     setKrxExchange(company.krx_exchange)
+    resetAnalysis()
     setError(null)
     setSearchError(null)
   }
@@ -771,6 +782,7 @@ export function ClosingBetPage() {
 
     setLoading(true)
     setError(null)
+    resetAnalysis()
 
     try {
       const { startDate, endDate } = recentStockWindow()
@@ -806,12 +818,7 @@ export function ClosingBetPage() {
       })
     } catch (caughtError) {
       setError(friendlyApiError(caughtError, '종가베팅 보조 데이터를 불러오지 못했습니다.'))
-      setQuote(null)
-      setSentiment(null)
-      setSectorSnapshot(null)
-      setResolvedSector(null)
-      setStockRows([])
-      setScores(INITIAL_SCORES)
+      resetAnalysis()
     } finally {
       setLoading(false)
     }
@@ -914,13 +921,7 @@ export function ClosingBetPage() {
     setSearchQuery('')
     setSearchResults([])
     setSearchError(null)
-    setQuote(null)
-    setSentiment(null)
-    setSectorSnapshot(null)
-    setResolvedSector(null)
-    setStockRows([])
-    setScenario(QUICK_SCENARIOS[1])
-    setScores(INITIAL_SCORES)
+    resetAnalysis()
     setError(null)
   }
 
@@ -930,8 +931,7 @@ export function ClosingBetPage() {
         <p className="content-panel__eyebrow">종가베팅 핵심 판단</p>
         <h2 className="content-panel__title">종가베팅</h2>
         <p className="content-panel__description">
-          오늘 끝까지 살아남은 수급이 내일도 이어질 확률을 서비스가 자동으로 점검하는
-          핵심 화면입니다. 실제 매매 기능은 없고, 후보 압축과 제외 신호 정리에 집중합니다.
+          수급 지속 가능성과 제외 신호를 자동 점검합니다.
         </p>
       </section>
 
@@ -1004,7 +1004,7 @@ export function ClosingBetPage() {
                       value={searchQuery}
                       onChange={(event) => handleSearchQueryChange(event.target.value)}
                       onKeyDown={(event) => {
-                        if (event.key === 'Enter') {
+                        if (event.key === 'Enter' && searchQuery.trim()) {
                           void handleSearch()
                         }
                       }}
@@ -1014,7 +1014,7 @@ export function ClosingBetPage() {
                       type="button"
                       className="secondary-action"
                       onClick={() => void handleSearch()}
-                      disabled={searchLoading}
+                      disabled={searchLoading || !searchQuery.trim()}
                     >
                       {searchLoading ? '검색 중...' : '검색'}
                     </button>
@@ -1056,11 +1056,14 @@ export function ClosingBetPage() {
               id="closing-bet-ticker"
               className="text-field"
               value={ticker}
-              onChange={(event) => setTicker(normalizeTicker(event.target.value, market))}
+              onChange={(event) => {
+                setTicker(normalizeTicker(event.target.value, market))
+                resetAnalysis()
+              }}
               placeholder={market === 'krx' ? '예: 005930' : '예: NVDA'}
             />
             <p className="helper-text helper-text--tight">
-              자동 판정은 최근 종가 구조, AI 뉴스, 섹터 문맥, 거래량 데이터를 반영합니다.
+              종가·뉴스·섹터·거래량을 반영합니다.
             </p>
           </div>
 
@@ -1092,8 +1095,12 @@ export function ClosingBetPage() {
             <div className="sentiment-meter__fill" style={{ width: `${totalScore}%` }} />
           </div>
 
-          <p className="sentiment-card__summary-label">{scoreLabel(totalScore)}</p>
-          <p className="sentiment-card__summary-text">{scoreAction(totalScore)}</p>
+          <p className="sentiment-card__summary-label">
+            {hasAnalysis ? scoreLabel(totalScore) : '자동 판정 전'}
+          </p>
+          <p className="sentiment-card__summary-text">
+            {hasAnalysis ? scoreAction(totalScore) : '종목을 선택하고 자동 판정을 실행하세요.'}
+          </p>
         </div>
 
         {quote || sentiment || resolvedSector ? (
@@ -1131,7 +1138,7 @@ export function ClosingBetPage() {
         <div className="content-panel content-panel--nested">
           <p className="content-panel__eyebrow">알림 설정</p>
           <p className="content-panel__description">
-            관심 종목을 저장해두면 조건을 만족했을 때 토스 앱이나 이메일로 알려드립니다.
+            설정 점수 이상이면 알림을 보냅니다.
           </p>
 
           <div className="field-grid field-grid--single-when-narrow">
@@ -1273,47 +1280,47 @@ export function ClosingBetPage() {
 
       <section className="content-panel">
         <p className="content-panel__eyebrow">자동 점검 항목</p>
-        <h3 className="content-panel__title">직접 점수를 넣지 않고 자동 판정 결과만 보여줍니다.</h3>
+        <h3 className="content-panel__title">자동 판정 항목</h3>
         <div className="diagnostic-list">
           <article className="diagnostic-item">
             <strong>섹터 강도</strong>
             <span>{scores.sectorStrength}</span>
-            <p>섹터 1일·1주 수익률, 추세 점수, 강세 섹터 포함 여부를 반영합니다.</p>
+            <p>섹터 수익률과 추세</p>
           </article>
           <article className="diagnostic-item">
             <strong>종가 강도</strong>
             <span>{scores.closeStrength}</span>
-            <p>당일 종가가 고가·저가 범위 어디에서 끝났는지와 몸통 강도를 반영합니다.</p>
+            <p>종가 위치와 캔들 강도</p>
           </article>
           <article className="diagnostic-item">
             <strong>거래대금 지속성</strong>
             <span>{scores.volumePersistence}</span>
-            <p>최근 20일 평균 대비 거래량과 종가 변화율, 섹터 추세를 같이 반영합니다.</p>
+            <p>평균 대비 거래량</p>
           </article>
           <article className="diagnostic-item">
             <strong>대장주 여부</strong>
             <span>{scores.leaderStatus}</span>
-            <p>해당 종목이 섹터 대표 바스켓에서 얼마나 앞쪽에 있는지 반영합니다.</p>
+            <p>섹터 내 대표성</p>
           </article>
           <article className="diagnostic-item">
             <strong>재료 지속성</strong>
             <span>{scores.newsFollowThrough}</span>
-            <p>AI 뉴스 감성 점수와 기사 흐름을 그대로 반영합니다.</p>
+            <p>뉴스 감성과 흐름</p>
           </article>
           <article className="diagnostic-item">
             <strong>내일 이벤트 연결</strong>
             <span>{scores.tomorrowCatalyst}</span>
-            <p>AI 감성 점수와 기사 수를 기반으로 다음 날 재점화 가능성을 추정합니다.</p>
+            <p>다음 날 재료 가능성</p>
           </article>
           <article className="diagnostic-item">
             <strong>리스크 통제 가능성</strong>
             <span>{scores.riskControl}</span>
-            <p>20일 고점 대비 위치와 당일 캔들 범위를 합쳐 손절 구조를 추정합니다.</p>
+            <p>고점 위치와 손절 구조</p>
           </article>
           <article className="diagnostic-item">
             <strong>장 마감 구조 보정</strong>
-            <span>{SCENARIO_MODIFIERS[scenario]}</span>
-            <p>서비스가 자동으로 판정한 장 마감 구조를 최종 점수에 가감합니다.</p>
+            <span>{scenario ? SCENARIO_MODIFIERS[scenario] : 0}</span>
+            <p>장 마감 구조 보정</p>
           </article>
         </div>
       </section>
@@ -1322,13 +1329,8 @@ export function ClosingBetPage() {
         <p className="content-panel__eyebrow">빠른 해석</p>
         <div className="content-panel content-panel--nested">
           <p className="content-panel__description">
-            서비스가 판단한 오늘 장 마감 구조: <strong>{scenario}</strong>
+            장 마감 구조: <strong>{scenario ?? '자동 판정 전'}</strong>
           </p>
-          <ul className="bullet-list bullet-list--spaced">
-            <li>종가베팅은 오늘 강했던 이유보다 그 강함이 종가까지 남았는지를 더 중요하게 봅니다.</li>
-            <li>점수가 높아도 종가가 억지로 끌어올려진 흐름이면 다음 날 갭만 주고 밀릴 수 있습니다.</li>
-            <li>점수가 낮아도 대장주가 눌림 뒤 재집결하는 날은 복기 대상으로 따로 볼 가치가 있습니다.</li>
-          </ul>
         </div>
 
         {sentiment ? (
@@ -1342,28 +1344,26 @@ export function ClosingBetPage() {
           <div className="content-panel content-panel--nested">
             <p className="content-panel__eyebrow">섹터 문맥</p>
             <p className="content-panel__description">
-              {resolvedSector.name} 섹터에 속하며, 현재 시장 요약은 "{sectorSnapshot.summary}" 입니다.
+              {resolvedSector.name} · 1일 {formatPct(resolvedSector.return_1d_pct)} · 1주{' '}
+              {formatPct(resolvedSector.return_5d_pct)} · {resolvedSector.trend_label}
             </p>
-            <ul className="bullet-list">
-              <li>섹터 1일 수익률은 {formatPct(resolvedSector.return_1d_pct)} 입니다.</li>
-              <li>1주 수익률은 {formatPct(resolvedSector.return_5d_pct)} 입니다.</li>
-              <li>추세 라벨은 {resolvedSector.trend_label} 입니다.</li>
-            </ul>
           </div>
         ) : null}
 
         <div className="content-panel content-panel--nested">
           <p className="content-panel__eyebrow">제외 신호</p>
           <div className="sector-list">
-            {(riskFlags.length > 0
+            {(hasAnalysis && riskFlags.length > 0
               ? riskFlags
-              : ['현재 자동 판정 기준에서는 뚜렷한 제외 신호가 강하게 잡히지 않았습니다.']
+              : [hasAnalysis ? '뚜렷한 제외 신호가 없습니다.' : '자동 판정 후 표시됩니다.']
             ).map((item) => (
               <article key={item} className="sector-list__item">
                 <div className="sector-list__top">
                   <div>
                     <h4 className="sector-list__title">{item}</h4>
-                    <p className="sector-list__subtitle">종가베팅 제외 우선 검토</p>
+                    {hasAnalysis && riskFlags.length > 0 ? (
+                      <p className="sector-list__subtitle">제외 우선 검토</p>
+                    ) : null}
                   </div>
                 </div>
               </article>
@@ -1371,24 +1371,6 @@ export function ClosingBetPage() {
           </div>
         </div>
 
-        <div className="content-panel content-panel--nested">
-          <p className="content-panel__eyebrow">체크 순서</p>
-          <ul className="bullet-list bullet-list--spaced">
-            <li>1. 섹터와 대장주가 같이 강한지 먼저 봅니다.</li>
-            <li>2. 종가가 고가 부근인지, 장 마감까지 살아남았는지 확인합니다.</li>
-            <li>3. 내일 다시 소화될 재료가 있는지 확인합니다.</li>
-            <li>4. 틀렸을 때 빨리 접을 기준이 없다면 점수가 높아도 제외합니다.</li>
-          </ul>
-        </div>
-
-        <div className="content-panel content-panel--nested">
-          <p className="content-panel__eyebrow">자동 보정 범위</p>
-          <ul className="bullet-list">
-            <li>자동 보정은 섹터 흐름, 최근 종가 변화율, 일봉 가격 구조, 거래량, AI 뉴스 점수를 반영합니다.</li>
-            <li>사용자가 직접 점수를 넣지 않도록 구성해 같은 기준으로 후보를 비교할 수 있게 했습니다.</li>
-            <li>이 화면은 매수 신호가 아니라 후보 압축과 복기 보조 화면으로 보는 편이 맞습니다.</li>
-          </ul>
-        </div>
       </section>
     </main>
   )

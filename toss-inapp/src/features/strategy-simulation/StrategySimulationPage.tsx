@@ -52,17 +52,17 @@ const STRATEGY_OPTIONS: Array<{ value: StrategyKey; label: string; description: 
   {
     value: 'moving_average',
     label: '이동평균',
-    description: '단기선이 장기선을 상향 돌파할 때 매수하고 하향 돌파할 때 매도합니다.',
+    description: '단기선과 장기선의 교차로 매매합니다.',
   },
   {
     value: 'rsi',
     label: 'RSI',
-    description: '과매도 구간 진입 시 매수하고 과매수 구간 진입 시 매도합니다.',
+    description: '과매도·과매수 구간으로 매매합니다.',
   },
   {
     value: 'bollinger_bands',
     label: '볼린저 밴드',
-    description: '비정상적으로 낮거나 높은 가격대에서 평균 회귀를 기대하는 전략입니다.',
+    description: '밴드 이탈 후 평균 회귀를 활용합니다.',
   },
 ] as const
 
@@ -503,8 +503,7 @@ export function StrategySimulationPage() {
         <p className="content-panel__eyebrow">전략 연습</p>
         <h2 className="content-panel__title">전략 시뮬레이션</h2>
         <p className="content-panel__description">
-          모바일 인앱 기준으로 백테스트와 전략 최적화를 한 화면 안에서 분리된 모드로
-          재구성했습니다.
+          백테스트와 최적화로 전략을 검증합니다.
         </p>
       </section>
 
@@ -646,13 +645,18 @@ export function StrategySimulationPage() {
                       className="text-field"
                       value={searchQuery}
                       onChange={(event) => setSearchQuery(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' && searchQuery.trim()) {
+                          void handleSearch()
+                        }
+                      }}
                       placeholder="회사명이나 6자리 종목코드"
                     />
                     <button
                       type="button"
                       className="secondary-action"
                       onClick={() => void handleSearch()}
-                      disabled={searchLoading}
+                      disabled={searchLoading || !searchQuery.trim()}
                     >
                       {searchLoading ? '검색 중...' : '검색'}
                     </button>
@@ -1119,7 +1123,7 @@ export function StrategySimulationPage() {
               {backtestResult.resolved_ticker} 백테스트 결과
             </h3>
             <p className="content-panel__description">
-              입력 종목 {backtestResult.ticker} 기준으로 조회한 실제 심볼은 {backtestResult.resolved_ticker}입니다.
+              조회 심볼 {backtestResult.resolved_ticker}
             </p>
 
             <div className="simulation-metric-grid">
@@ -1222,7 +1226,7 @@ export function StrategySimulationPage() {
               {optimizationResult.resolved_ticker} 최적 파라미터 탐색
             </h3>
             <p className="content-panel__description">
-              기준 지표는 {metricLabel(optimizationResult.metric_optimized)}이며, 가능한 조합 중 가장 높은 값을 찾았습니다.
+              {metricLabel(optimizationResult.metric_optimized)} 기준 최적 조합입니다.
             </p>
 
             <div className="simulation-metric-grid">
@@ -1292,14 +1296,6 @@ export function StrategySimulationPage() {
         </>
       ) : null}
 
-      <section className="content-panel">
-        <p className="content-panel__eyebrow">현재 범위</p>
-        <ul className="bullet-list">
-          <li>백테스트는 전략 요약과 최근 거래 내역까지 바로 확인할 수 있습니다.</li>
-          <li>전략 최적화는 상위 조합 요약까지 제공하며, 이후 단계에서 시각화와 전체 결과 탐색 UX를 더 보강할 수 있습니다.</li>
-          <li>포트폴리오 곡선 차트는 다음 시각화 단계에서 추가하는 편이 구조적으로 깔끔합니다.</li>
-        </ul>
-      </section>
     </main>
   )
 }

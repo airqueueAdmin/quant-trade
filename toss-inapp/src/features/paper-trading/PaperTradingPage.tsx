@@ -87,6 +87,7 @@ export function PaperTradingPage() {
   const [searchResults, setSearchResults] = useState<KRXSearchResult[]>([])
   const [searchLoading, setSearchLoading] = useState(false)
   const [searchError, setSearchError] = useState<string | null>(null)
+  const [isCompanySearchOpen, setIsCompanySearchOpen] = useState(false)
   const [quote, setQuote] = useState<QuoteSnapshot | null>(null)
   const [quoteLoading, setQuoteLoading] = useState(false)
   const [quoteError, setQuoteError] = useState<string | null>(null)
@@ -99,6 +100,19 @@ export function PaperTradingPage() {
   const [actionMessage, setActionMessage] = useState<string | null>(null)
 
   const commonKrxCompanies = useMemo(() => COMMON_KRX_COMPANIES, [])
+
+  function handleSelectCompany(company: KRXSearchResult) {
+    setSelectedCompany(company)
+    setIsCompanySearchOpen(false)
+    setSearchQuery('')
+    setSearchResults([])
+    setSearchError(null)
+  }
+
+  function handleOpenCompanySearch() {
+    setIsCompanySearchOpen(true)
+    setSearchError(null)
+  }
 
   useEffect(() => {
     const abortController = new AbortController()
@@ -311,6 +325,10 @@ export function PaperTradingPage() {
   }
 
   async function handleSearch() {
+    if (!isCompanySearchOpen) {
+      return
+    }
+
     const normalizedQuery = searchQuery.trim()
     if (!normalizedQuery) {
       setSearchResults([])
@@ -464,8 +482,7 @@ export function PaperTradingPage() {
         <p className="content-panel__eyebrow">종가베팅 4단계</p>
         <h2 className="content-panel__title">모의투자</h2>
         <p className="content-panel__description">
-          종가 기준으로 고른 후보를 다음 날 어떻게 대응할지 연습하는 대응 점검
-          서포트 화면입니다.
+          선택한 종목의 매매 대응을 연습합니다.
         </p>
       </section>
 
@@ -475,7 +492,7 @@ export function PaperTradingPage() {
             <p className="account-strip__label">투자 연습 공간</p>
             <strong className="account-strip__value">이 기기에서 이어서 사용 중</strong>
             <p className="account-strip__description">
-              같은 기기에서는 이전 연습 기록과 자산 상태를 이어서 확인할 수 있습니다.
+              기록과 자산 상태가 이 기기에 저장됩니다.
             </p>
           </div>
           <div className="paper-actions">
@@ -552,12 +569,18 @@ export function PaperTradingPage() {
               className={
                 selectedCompany.ticker === company.ticker ? 'chip chip--active' : 'chip'
               }
-              onClick={() => setSelectedCompany(company)}
+              onClick={() => handleSelectCompany(company)}
             >
               {company.name}
             </button>
           ))}
         </div>
+
+        <p id="paper-company-search-help" className="helper-text helper-text--tight">
+          {isCompanySearchOpen
+            ? '검색 결과에서 종목을 선택하세요.'
+            : `${selectedCompany.name} 선택됨`}
+        </p>
 
         <div className="input-action-row input-action-row--wide">
           <input
@@ -565,16 +588,24 @@ export function PaperTradingPage() {
             value={searchQuery}
             onChange={(event) => setSearchQuery(event.target.value)}
             placeholder="회사명이나 6자리 종목코드"
+            disabled={!isCompanySearchOpen}
+            aria-describedby="paper-company-search-help"
           />
           <button
             type="button"
             className="secondary-action"
             onClick={() => void handleSearch()}
-            disabled={searchLoading}
+            disabled={!isCompanySearchOpen || searchLoading}
           >
             {searchLoading ? '검색 중...' : '국내 종목 검색'}
           </button>
         </div>
+
+        {!isCompanySearchOpen ? (
+          <button type="button" className="secondary-action" onClick={handleOpenCompanySearch}>
+            다른 종목 찾기
+          </button>
+        ) : null}
 
         {searchError ? <div className="state-box state-box--error">{searchError}</div> : null}
 
@@ -585,7 +616,7 @@ export function PaperTradingPage() {
                 key={`${item.ticker}-${item.krx_exchange}`}
                 type="button"
                 className="search-result-item"
-                onClick={() => setSelectedCompany(item)}
+                onClick={() => handleSelectCompany(item)}
               >
                 <strong>{item.name}</strong>
                 <span>{item.display_name ?? `${item.ticker} (${item.krx_exchange.toUpperCase()})`}</span>
@@ -689,11 +720,9 @@ export function PaperTradingPage() {
         <div className="content-panel content-panel--nested">
           <p className="content-panel__eyebrow">사용 안내</p>
           <ul className="bullet-list">
-            <li>국내주식만 지원합니다.</li>
-            <li>현재가는 최근 종가 기준입니다.</li>
-            <li>수수료, 세금, 슬리피지는 아직 반영하지 않습니다.</li>
-            <li>이 브라우저에서는 같은 투자 연습 계정으로 계속 이어서 사용할 수 있습니다.</li>
-            <li>다른 기기에서는 새로운 연습 계정으로 시작될 수 있습니다.</li>
+            <li>국내주식의 최근 종가를 사용합니다.</li>
+            <li>수수료·세금·슬리피지는 제외됩니다.</li>
+            <li>연습 계정은 기기별로 관리됩니다.</li>
           </ul>
         </div>
       </section>

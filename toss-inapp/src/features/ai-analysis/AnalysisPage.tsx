@@ -158,8 +158,7 @@ export function AnalysisPage() {
         <p className="content-panel__eyebrow">종가베팅 2단계</p>
         <h2 className="content-panel__title">AI 시장 분석</h2>
         <p className="content-panel__description">
-          종가베팅 후보 종목에 붙은 뉴스와 시장 심리를 빠르게 요약하는 재료 해석
-          서포트 화면입니다.
+          종목 뉴스와 시장 심리를 요약합니다.
         </p>
       </section>
 
@@ -321,7 +320,7 @@ export function AnalysisPage() {
 
               {!result.news_api_enabled ? (
                 <div className="state-box">
-                  지금은 일부 최신 뉴스만 반영되고 있어 분석 범위가 평소보다 좁을 수 있습니다.
+                  현재 일부 최신 뉴스만 반영됩니다.
                 </div>
               ) : null}
             </div>
