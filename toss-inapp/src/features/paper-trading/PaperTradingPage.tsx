@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { apiClient } from '../../shared/api/client'
 import { ApiError } from '../../shared/api/http'
@@ -15,6 +15,27 @@ const COMMON_KRX_COMPANIES: KRXSearchResult[] = [
   { name: '카카오', ticker: '035720', krx_exchange: 'kospi', display_name: '카카오 (035720, KOSPI)' },
   { name: '알테오젠', ticker: '196170', krx_exchange: 'kosdaq', display_name: '알테오젠 (196170, KOSDAQ)' },
 ]
+
+function searchLocalCompanies(query: string, companies: KRXSearchResult[]) {
+  const normalizedQuery = query.trim().toLowerCase()
+  if (!normalizedQuery) {
+    return []
+  }
+
+  return companies.filter((company) =>
+    [company.name, company.ticker, company.display_name ?? ''].some((value) =>
+      value.toLowerCase().includes(normalizedQuery),
+    ),
+  )
+}
+
+function mergeSearchResults(primary: KRXSearchResult[], secondary: KRXSearchResult[]) {
+  const merged = new Map<string, KRXSearchResult>()
+  for (const company of [...primary, ...secondary]) {
+    merged.set(`${company.ticker}-${company.krx_exchange}`, company)
+  }
+  return [...merged.values()].slice(0, 20)
+}
 
 type EnrichedHolding = {
   ticker: string
@@ -98,6 +119,7 @@ export function PaperTradingPage() {
   const [resetting, setResetting] = useState(false)
   const [refreshToken, setRefreshToken] = useState(0)
   const [actionMessage, setActionMessage] = useState<string | null>(null)
+  const companySearchInputRef = useRef<HTMLInputElement>(null)
 
   const commonKrxCompanies = useMemo(() => COMMON_KRX_COMPANIES, [])
 
@@ -111,8 +133,22 @@ export function PaperTradingPage() {
 
   function handleOpenCompanySearch() {
     setIsCompanySearchOpen(true)
+    setSearchQuery('')
+    setSearchResults([])
     setSearchError(null)
   }
+
+  function handleSearchQueryChange(value: string) {
+    setSearchQuery(value)
+    setSearchError(null)
+    setSearchResults(searchLocalCompanies(value, commonKrxCompanies))
+  }
+
+  useEffect(() => {
+    if (isCompanySearchOpen) {
+      companySearchInputRef.current?.focus()
+    }
+  }, [isCompanySearchOpen])
 
   useEffect(() => {
     const abortController = new AbortController()
@@ -338,22 +374,27 @@ export function PaperTradingPage() {
 
     setSearchLoading(true)
     setSearchError(null)
+    const localResults = searchLocalCompanies(normalizedQuery, commonKrxCompanies)
+    setSearchResults(localResults)
 
     try {
       const response = await apiClient.searchKrxStocks(normalizedQuery, 20)
-      setSearchResults(response.results)
-      if (response.results.length === 0) {
+      const mergedResults = mergeSearchResults(response.results, localResults)
+      setSearchResults(mergedResults)
+      if (mergedResults.length === 0) {
         setSearchError('검색 결과가 없습니다.')
       }
     } catch (caughtError) {
-      if (caughtError instanceof ApiError) {
+      if (localResults.length > 0) {
+        setSearchResults(localResults)
+        setSearchError(null)
+      } else if (caughtError instanceof ApiError) {
         setSearchError(caughtError.detail)
       } else if (caughtError instanceof Error) {
         setSearchError(caughtError.message)
       } else {
         setSearchError('국내 종목 검색에 실패했습니다.')
       }
-      setSearchResults([])
     } finally {
       setSearchLoading(false)
     }
@@ -582,23 +623,57 @@ export function PaperTradingPage() {
             : `${selectedCompany.name} 선택됨`}
         </p>
 
-        <div className="input-action-row input-action-row--wide">
-          <input
-            className="text-field"
-            value={searchQuery}
-            onChange={(event) => setSearchQuery(event.target.value)}
-            placeholder="회사명이나 6자리 종목코드"
-            disabled={!isCompanySearchOpen}
-            aria-describedby="paper-company-search-help"
-          />
-          <button
-            type="button"
-            className="secondary-action"
-            onClick={() => void handleSearch()}
-            disabled={!isCompanySearchOpen || searchLoading}
-          >
-            {searchLoading ? '검색 중...' : '국내 종목 검색'}
-          </button>
+        <div className="paper-company-search">
+          <div className="input-action-row input-action-row--wide">
+            <input
+              ref={companySearchInputRef}
+              className="text-field"
+              value={searchQuery}
+              onChange={(event) => handleSearchQueryChange(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && searchQuery.trim()) {
+                  void handleSearch()
+                }
+              }}
+              placeholder="회사명이나 6자리 종목코드"
+              disabled={!isCompanySearchOpen}
+              aria-describedby="paper-company-search-help"
+              aria-controls="paper-company-search-results"
+              aria-expanded={isCompanySearchOpen && searchResults.length > 0}
+              role="combobox"
+            />
+            <button
+              type="button"
+              className="secondary-action"
+              onClick={() => void handleSearch()}
+              disabled={!isCompanySearchOpen || searchLoading || !searchQuery.trim()}
+            >
+              {searchLoading ? '검색 중...' : '검색'}
+            </button>
+          </div>
+
+          {isCompanySearchOpen && searchResults.length > 0 ? (
+            <div
+              id="paper-company-search-results"
+              className="paper-company-search__list"
+              role="listbox"
+              aria-label="종목 검색 결과"
+            >
+              {searchResults.map((item) => (
+                <button
+                  key={`${item.ticker}-${item.krx_exchange}`}
+                  type="button"
+                  className="paper-company-search__option"
+                  role="option"
+                  aria-selected={selectedCompany.ticker === item.ticker}
+                  onClick={() => handleSelectCompany(item)}
+                >
+                  <strong>{item.name}</strong>
+                  <span>{item.display_name ?? `${item.ticker} (${item.krx_exchange.toUpperCase()})`}</span>
+                </button>
+              ))}
+            </div>
+          ) : null}
         </div>
 
         {!isCompanySearchOpen ? (
@@ -608,22 +683,6 @@ export function PaperTradingPage() {
         ) : null}
 
         {searchError ? <div className="state-box state-box--error">{searchError}</div> : null}
-
-        {searchResults.length > 0 ? (
-          <div className="search-result-list">
-            {searchResults.map((item) => (
-              <button
-                key={`${item.ticker}-${item.krx_exchange}`}
-                type="button"
-                className="search-result-item"
-                onClick={() => handleSelectCompany(item)}
-              >
-                <strong>{item.name}</strong>
-                <span>{item.display_name ?? `${item.ticker} (${item.krx_exchange.toUpperCase()})`}</span>
-              </button>
-            ))}
-          </div>
-        ) : null}
 
         {quoteLoading ? <div className="state-box">현재가를 불러오는 중입니다...</div> : null}
         {!quoteLoading && quoteError ? <div className="state-box state-box--error">{quoteError}</div> : null}

@@ -722,6 +722,53 @@ select {
   overflow-wrap: anywhere;
 }
 
+.paper-company-search {
+  position: relative;
+}
+
+.paper-company-search__list {
+  margin-top: 6px;
+  max-height: 260px;
+  overflow-y: auto;
+  border: 1px solid rgba(25, 31, 40, 0.12);
+  border-radius: 14px;
+  background: #ffffff;
+  box-shadow: 0 10px 30px rgba(25, 31, 40, 0.12);
+}
+
+.paper-company-search__option {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 13px 14px;
+  border: 0;
+  border-bottom: 1px solid rgba(25, 31, 40, 0.08);
+  background: #ffffff;
+  color: #191f28;
+  text-align: left;
+}
+
+.paper-company-search__option:last-child {
+  border-bottom: 0;
+}
+
+.paper-company-search__option:active,
+.paper-company-search__option[aria-selected='true'] {
+  background: #f2f4f6;
+}
+
+.paper-company-search__option strong {
+  min-width: 0;
+}
+
+.paper-company-search__option span {
+  color: #6b7684;
+  font-size: 13px;
+  text-align: right;
+}
+
 .paper-actions {
   display: flex;
   flex-wrap: wrap;
