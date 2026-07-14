@@ -5,6 +5,7 @@ from functools import lru_cache
 import io
 from pathlib import Path
 import re
+from threading import Lock
 import time as time_module
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -30,6 +31,9 @@ DEFAULT_REQUEST_HEADERS = {
     ),
     "Referer": "https://kind.krx.co.kr/corpgeneral/corpList.do?method=loadInitPage",
 }
+KRX_LISTING_DOWNLOAD_ATTEMPTS = 3
+_KRX_LISTING_MEMORY: pd.DataFrame | None = None
+_KRX_LISTING_LOCK = Lock()
 
 
 class MarketDataProviderError(RuntimeError):
@@ -129,21 +133,58 @@ def _download_krx_listing(market_type: str, exchange: str) -> pd.DataFrame:
     return listing[["회사명", "종목코드", "krx_exchange", "display_name"]]
 
 
-@lru_cache(maxsize=1)
-def get_krx_listing() -> pd.DataFrame:
+def load_cached_krx_listing() -> pd.DataFrame:
+    if not KRX_CACHE_FILE.exists():
+        return pd.DataFrame()
+
     try:
-        kospi = _download_krx_listing("stockMkt", "kospi")
-        kosdaq = _download_krx_listing("kosdaqMkt", "kosdaq")
-        listing = pd.concat([kospi, kosdaq], ignore_index=True)
-        KRX_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        listing.to_csv(KRX_CACHE_FILE, index=False, encoding="utf-8-sig")
-        return listing
+        cached = pd.read_csv(KRX_CACHE_FILE, dtype={"종목코드": str})
     except Exception:
-        if KRX_CACHE_FILE.exists():
-            cached = pd.read_csv(KRX_CACHE_FILE, dtype={"종목코드": str})
-            cached["종목코드"] = cached["종목코드"].astype(str).str.zfill(6)
-            return cached
-        return pd.DataFrame(columns=["회사명", "종목코드", "krx_exchange", "display_name"])
+        return pd.DataFrame()
+
+    required_columns = ["회사명", "종목코드", "krx_exchange", "display_name"]
+    if cached.empty or not set(required_columns).issubset(cached.columns):
+        return pd.DataFrame()
+
+    cached["종목코드"] = cached["종목코드"].astype(str).str.zfill(6)
+    return cached[required_columns].copy()
+
+
+def get_krx_listing() -> pd.DataFrame:
+    global _KRX_LISTING_MEMORY
+
+    if _KRX_LISTING_MEMORY is not None and not _KRX_LISTING_MEMORY.empty:
+        return _KRX_LISTING_MEMORY.copy()
+
+    with _KRX_LISTING_LOCK:
+        if _KRX_LISTING_MEMORY is not None and not _KRX_LISTING_MEMORY.empty:
+            return _KRX_LISTING_MEMORY.copy()
+
+        cached = load_cached_krx_listing()
+        last_error: Exception | None = None
+
+        for attempt in range(KRX_LISTING_DOWNLOAD_ATTEMPTS):
+            try:
+                kospi = _download_krx_listing("stockMkt", "kospi")
+                kosdaq = _download_krx_listing("kosdaqMkt", "kosdaq")
+                listing = pd.concat([kospi, kosdaq], ignore_index=True)
+                if listing.empty:
+                    raise MarketDataProviderError("KRX 종목 목록이 비어 있습니다.")
+
+                KRX_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+                listing.to_csv(KRX_CACHE_FILE, index=False, encoding="utf-8-sig")
+                _KRX_LISTING_MEMORY = listing
+                return listing.copy()
+            except Exception as error:
+                last_error = error
+                if attempt < KRX_LISTING_DOWNLOAD_ATTEMPTS - 1:
+                    time_module.sleep(0.5 * (attempt + 1))
+
+        if not cached.empty:
+            _KRX_LISTING_MEMORY = cached
+            return cached.copy()
+
+        raise MarketDataProviderError("KRX 종목 목록을 불러오지 못했습니다.") from last_error
 
 
 def search_krx_stocks(query: str, limit: int = 20) -> list[dict[str, str]]:

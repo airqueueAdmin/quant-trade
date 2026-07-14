@@ -3,6 +3,7 @@ uvicorn[standard]
 yfinance
 numpy
 pandas
+lxml
 gnews
 google-genai
 python-dotenv
