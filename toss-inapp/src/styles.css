@@ -110,6 +110,27 @@ select {
   padding-bottom: 96px;
 }
 
+.banner-ad {
+  width: 100%;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+.banner-ad__slot {
+  width: 100%;
+}
+
+.banner-ad--initializing .banner-ad__slot,
+.banner-ad--loading .banner-ad__slot,
+.banner-ad--visible .banner-ad__slot {
+  min-height: 96px;
+}
+
+.banner-ad--disabled,
+.banner-ad--unavailable {
+  height: 0;
+}
+
 .app-nav {
   position: sticky;
   bottom: 0;

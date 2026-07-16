@@ -1,5 +1,8 @@
 import { NavLink, Outlet } from 'react-router-dom'
 
+import { BannerAd } from '../shared/ads/BannerAd'
+import { env } from '../shared/config/env'
+
 const NAV_ITEMS = [
   { to: '/', label: '홈' },
   { to: '/sector-flow', label: '섹터 흐름' },
@@ -27,6 +30,8 @@ export function AppLayout() {
         <main className="app-content">
           <Outlet />
         </main>
+
+        <BannerAd adGroupId={env.ads.bannerAdGroupId} />
 
         <nav className="app-nav" aria-label="주요 페이지">
           {NAV_ITEMS.map((item) => (
