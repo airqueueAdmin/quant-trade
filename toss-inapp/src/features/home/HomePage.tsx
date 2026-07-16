@@ -1,4 +1,6 @@
 import { StatusCard } from '../../components/StatusCard'
+import { env } from '../../shared/config/env'
+import { ContactsViralCard } from '../../shared/rewards/ContactsViralCard'
 
 export function HomePage() {
   return (
@@ -60,6 +62,8 @@ export function HomePage() {
           </article>
         </div>
       </section>
+
+      <ContactsViralCard moduleId={env.rewards.contactsViralModuleId} />
 
       <section className="status-grid" aria-label="주요 서비스 소개">
         <StatusCard

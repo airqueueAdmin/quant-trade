@@ -10,6 +10,10 @@ const configuredBannerAdGroupId = (
   import.meta.env.VITE_BANNER_AD_GROUP_ID || ''
 ).trim()
 
+const configuredContactsViralModuleId = (
+  import.meta.env.VITE_CONTACTS_VIRAL_MODULE_ID || ''
+).trim()
+
 export const env = {
   backendUrl: (import.meta.env.VITE_BACKEND_URL || fallbackBackendUrl).trim(),
   ads: {
@@ -20,5 +24,8 @@ export const env = {
     bannerAdGroupId: import.meta.env.DEV
       ? testBannerAdGroupId
       : configuredBannerAdGroupId,
+  },
+  rewards: {
+    contactsViralModuleId: configuredContactsViralModuleId,
   },
 }

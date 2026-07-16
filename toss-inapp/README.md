@@ -31,6 +31,7 @@ npm run build
 - `VITE_BACKEND_URL`
 - `VITE_INTERSTITIAL_AD_GROUP_ID`: 운영용 전면 광고 그룹 ID. 로컬 개발에서는 정책에 맞게 공식 테스트 ID를 강제로 사용합니다.
 - `VITE_BANNER_AD_GROUP_ID`: 운영용 리스트형 배너 광고 그룹 ID. 로컬 개발에서는 공식 테스트 ID를 강제로 사용합니다.
+- `VITE_CONTACTS_VIRAL_MODULE_ID`: 앱인토스 콘솔에서 발급한 공유 리워드 ID입니다. 값이 없으면 홈의 공유 리워드 영역을 표시하지 않습니다.
 
 광고 테스트:
 - 로컬 개발 서버는 전면형 `ait-ad-test-interstitial-id`, 배너형 `ait-ad-test-banner-id`를 사용합니다.
@@ -49,6 +50,8 @@ Remove-Item Env:VITE_BANNER_AD_GROUP_ID
 ```
 
 그다음 `npm run build`를 실행하면 `.env.production`의 운영 ID가 들어간 `glance-invest.ait`가 생성됩니다. `glance-invest-test.ait`는 콘솔 QR 검증 전용이고, `glance-invest.ait`는 출시 전용입니다.
+
+공유 리워드는 토스 앱 5.223.0 이상과 승인된 미니앱에서만 동작합니다. 샌드박스가 아닌 콘솔 QR로 `sendViral`, `close`, 오류 처리와 뒤로 가기를 확인합니다.
 
 문서:
 - `docs/resume-status.md`
