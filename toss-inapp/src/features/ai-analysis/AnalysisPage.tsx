@@ -3,6 +3,8 @@ import { useMemo, useState } from 'react'
 import { apiClient } from '../../shared/api/client'
 import { ApiError } from '../../shared/api/http'
 import type { KrxExchange, KRXSearchResult, Market, SentimentResult } from '../../shared/api/types'
+import { useFullScreenAd } from '../../shared/ads/useFullScreenAd'
+import { env } from '../../shared/config/env'
 
 const MARKET_OPTIONS: Array<{ value: Market; label: string }> = [
   { value: 'us', label: '미국주식' },
@@ -61,6 +63,7 @@ function scoreLabel(score: number) {
 }
 
 export function AnalysisPage() {
+  const analysisAd = useFullScreenAd(env.ads.interstitialAdGroupId)
   const [market, setMarket] = useState<Market>('us')
   const [krxExchange, setKrxExchange] = useState<KrxExchange>('auto')
   const [ticker, setTicker] = useState(defaultTicker('us'))
@@ -136,6 +139,7 @@ export function AnalysisPage() {
     try {
       const response = await apiClient.sentiment(normalizedTicker, market, krxExchange)
       setResult(response)
+      analysisAd.showAd()
     } catch (caughtError) {
       if (caughtError instanceof ApiError) {
         setAnalysisError(caughtError.detail)
@@ -288,6 +292,11 @@ export function AnalysisPage() {
           >
             {analysisLoading ? 'AI 분석 중...' : 'AI 분석 실행'}
           </button>
+          {analysisAd.enabled ? (
+            <p className="helper-text helper-text--tight">
+              분석이 끝나면 결과 확인 전에 전면 광고가 표시될 수 있습니다.
+            </p>
+          ) : null}
         </div>
 
         {analysisError ? <div className="state-box state-box--error">{analysisError}</div> : null}

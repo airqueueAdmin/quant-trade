@@ -29,6 +29,12 @@ npm run build
 
 환경 변수:
 - `VITE_BACKEND_URL`
+- `VITE_INTERSTITIAL_AD_GROUP_ID`: 운영용 전면 광고 그룹 ID. 로컬 개발에서는 정책에 맞게 공식 테스트 ID를 강제로 사용합니다.
+
+광고 테스트:
+- 로컬 개발 서버는 `ait-ad-test-interstitial-id`를 사용합니다.
+- 콘솔 QR 테스트용 production 빌드에서는 `VITE_INTERSTITIAL_AD_GROUP_ID=ait-ad-test-interstitial-id`로 설정합니다.
+- 실제 광고 그룹 ID는 출시 빌드에서만 설정합니다. 운영 ID가 비어 있으면 광고 없이 핵심 기능이 계속 동작합니다.
 
 문서:
 - `docs/resume-status.md`
