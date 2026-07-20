@@ -19,12 +19,8 @@ export function AppLayout() {
         <header className="app-header">
           <div className="app-header__topline">
             <p className="app-header__eyebrow">한눈투자</p>
-            <span className="app-header__pill">종가베팅 준비</span>
+            <span className="app-header__pill">Closing Bet</span>
           </div>
-          <h1 className="app-header__title">내일 이어질 수급을 찾습니다</h1>
-          <p className="app-header__description">
-            섹터 탐색부터 분석·검증·모의투자까지 한 흐름으로 확인하세요.
-          </p>
         </header>
 
         <main className="app-content">

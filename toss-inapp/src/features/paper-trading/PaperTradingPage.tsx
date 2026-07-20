@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 
+import { StepFlow } from '../../components/StepFlow'
 import { apiClient } from '../../shared/api/client'
 import { ApiError } from '../../shared/api/http'
 import type { KrxExchange, KRXSearchResult, PaperTradingState, QuoteSnapshot } from '../../shared/api/types'
@@ -15,6 +16,29 @@ const COMMON_KRX_COMPANIES: KRXSearchResult[] = [
   { name: '카카오', ticker: '035720', krx_exchange: 'kospi', display_name: '카카오 (035720, KOSPI)' },
   { name: '알테오젠', ticker: '196170', krx_exchange: 'kosdaq', display_name: '알테오젠 (196170, KOSDAQ)' },
 ]
+
+const PAPER_TRADING_STEPS = [
+  {
+    label: '계좌',
+    title: '연습 계좌 상태를 확인하세요',
+    description: '현재 자산만 먼저 확인하고 다음 단계로 이동합니다.',
+  },
+  {
+    label: '종목',
+    title: '연습할 종목을 하나 선택하세요',
+    description: '종목을 고르면 최근 종가를 불러옵니다.',
+  },
+  {
+    label: '주문',
+    title: '매수 또는 매도를 연습하세요',
+    description: '수량과 예상 주문금액을 확인한 뒤 모의 주문을 반영합니다.',
+  },
+  {
+    label: '기록',
+    title: '보유 종목과 거래 기록을 확인하세요',
+    description: '주문 결과와 현재 손익을 한곳에서 확인할 수 있습니다.',
+  },
+] as const
 
 function searchLocalCompanies(query: string, companies: KRXSearchResult[]) {
   const normalizedQuery = query.trim().toLowerCase()
@@ -100,6 +124,7 @@ export function PaperTradingPage() {
   const [session, setSession] = useState<AppSession | null>(() => readStoredSession())
   const [allowSessionBootstrap, setAllowSessionBootstrap] = useState(() => readStoredSession() === null)
   const [selectedCompany, setSelectedCompany] = useState<KRXSearchResult>(COMMON_KRX_COMPANIES[0])
+  const [selectedQuickTicker, setSelectedQuickTicker] = useState<string | null>(COMMON_KRX_COMPANIES[0].ticker)
   const [paperState, setPaperState] = useState<PaperTradingState | null>(null)
   const [sessionLoading, setSessionLoading] = useState(false)
   const [stateLoading, setStateLoading] = useState(true)
@@ -119,19 +144,22 @@ export function PaperTradingPage() {
   const [resetting, setResetting] = useState(false)
   const [refreshToken, setRefreshToken] = useState(0)
   const [actionMessage, setActionMessage] = useState<string | null>(null)
+  const [currentStep, setCurrentStep] = useState(0)
   const companySearchInputRef = useRef<HTMLInputElement>(null)
 
   const commonKrxCompanies = useMemo(() => COMMON_KRX_COMPANIES, [])
 
-  function handleSelectCompany(company: KRXSearchResult) {
+  function handleSelectCompany(company: KRXSearchResult, isQuickPick = false) {
     setSelectedCompany(company)
-    setIsCompanySearchOpen(false)
+    setSelectedQuickTicker(isQuickPick ? company.ticker : null)
+    setIsCompanySearchOpen(!isQuickPick)
     setSearchQuery('')
     setSearchResults([])
     setSearchError(null)
   }
 
   function handleOpenCompanySearch() {
+    setSelectedQuickTicker(null)
     setIsCompanySearchOpen(true)
     setSearchQuery('')
     setSearchResults([])
@@ -480,6 +508,7 @@ export function PaperTradingPage() {
       })
       setActionMessage(`${orderSide === 'buy' ? '매수' : '매도'} 주문을 모의 반영했습니다.`)
       setRefreshToken((value) => value + 1)
+      setCurrentStep(3)
     } catch (caughtError) {
       if (caughtError instanceof ApiError) {
         setActionMessage(caughtError.detail)
@@ -519,14 +548,16 @@ export function PaperTradingPage() {
 
   return (
     <main className="page-shell">
-      <section className="content-panel">
-        <p className="content-panel__eyebrow">종가베팅 4단계</p>
-        <h2 className="content-panel__title">모의투자</h2>
-        <p className="content-panel__description">
-          선택한 종목의 매매 대응을 연습합니다.
-        </p>
-      </section>
-
+      <StepFlow
+        pageTitle="모의투자"
+        steps={PAPER_TRADING_STEPS}
+        currentStep={currentStep}
+        onStepChange={setCurrentStep}
+        nextDisabled={
+          (currentStep === 0 && (sessionLoading || stateLoading || !paperState))
+          || (currentStep === 1 && (quoteLoading || !quote))
+        }
+      >
       <section className="content-panel">
         <div className="account-strip">
           <div>
@@ -597,7 +628,8 @@ export function PaperTradingPage() {
         ) : null}
       </section>
 
-      <section className="content-panel">
+      <details className="content-panel disclosure-panel">
+        <summary>보유 종목 {holdings.length}개 보기</summary>
         <div className="section-block__header">
           <h3>종목 선택</h3>
         </div>
@@ -608,9 +640,9 @@ export function PaperTradingPage() {
               key={company.ticker}
               type="button"
               className={
-                selectedCompany.ticker === company.ticker ? 'chip chip--active' : 'chip'
+                selectedQuickTicker === company.ticker ? 'chip chip--active' : 'chip'
               }
-              onClick={() => handleSelectCompany(company)}
+              onClick={() => handleSelectCompany(company, true)}
             >
               {company.name}
             </button>
@@ -618,9 +650,11 @@ export function PaperTradingPage() {
         </div>
 
         <p id="paper-company-search-help" className="helper-text helper-text--tight">
-          {isCompanySearchOpen
-            ? '검색 결과에서 종목을 선택하세요.'
-            : `${selectedCompany.name} 선택됨`}
+          {selectedQuickTicker
+            ? `${selectedCompany.name} 빠른 선택됨`
+            : searchResults.length > 0
+              ? '검색 결과에서 종목을 선택하세요.'
+              : `${selectedCompany.name} 선택됨 · 다른 종목을 검색할 수 있습니다.`}
         </p>
 
         <div className="paper-company-search">
@@ -636,7 +670,7 @@ export function PaperTradingPage() {
                 }
               }}
               placeholder="회사명이나 6자리 종목코드"
-              disabled={!isCompanySearchOpen}
+              disabled={Boolean(selectedQuickTicker)}
               aria-describedby="paper-company-search-help"
               aria-controls="paper-company-search-results"
               aria-expanded={isCompanySearchOpen && searchResults.length > 0}
@@ -646,7 +680,7 @@ export function PaperTradingPage() {
               type="button"
               className="secondary-action"
               onClick={() => void handleSearch()}
-              disabled={!isCompanySearchOpen || searchLoading || !searchQuery.trim()}
+              disabled={Boolean(selectedQuickTicker) || searchLoading || !searchQuery.trim()}
             >
               {searchLoading ? '검색 중...' : '검색'}
             </button>
@@ -676,7 +710,7 @@ export function PaperTradingPage() {
           ) : null}
         </div>
 
-        {!isCompanySearchOpen ? (
+        {selectedQuickTicker ? (
           <button type="button" className="secondary-action" onClick={handleOpenCompanySearch}>
             다른 종목 찾기
           </button>
@@ -706,9 +740,10 @@ export function PaperTradingPage() {
             </div>
           </div>
         ) : null}
-      </section>
+      </details>
 
-      <section className="content-panel">
+      <details className="content-panel disclosure-panel">
+        <summary>거래 내역 {paperState?.trades.length ?? 0}건 보기</summary>
         <div className="section-block__header">
           <h3>모의 주문</h3>
         </div>
@@ -784,8 +819,9 @@ export function PaperTradingPage() {
             <li>연습 계정은 기기별로 관리됩니다.</li>
           </ul>
         </div>
-      </section>
+      </details>
 
+      <>
       <section className="content-panel">
         <div className="section-block__header">
           <h3>보유 종목</h3>
@@ -851,6 +887,8 @@ export function PaperTradingPage() {
           </div>
         )}
       </section>
+      </>
+      </StepFlow>
     </main>
   )
 }

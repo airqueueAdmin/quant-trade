@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 
+import { StepFlow } from '../../components/StepFlow'
 import { apiClient } from '../../shared/api/client'
 import { ApiError } from '../../shared/api/http'
 import type {
@@ -80,6 +81,29 @@ const COMMON_KRX_COMPANIES: KRXSearchResult[] = [
   { name: 'NAVER', ticker: '035420', krx_exchange: 'kospi', display_name: 'NAVER (035420, KOSPI)' },
   { name: '알테오젠', ticker: '196170', krx_exchange: 'kosdaq', display_name: '알테오젠 (196170, KOSDAQ)' },
 ]
+
+const SIMULATION_STEPS = [
+  {
+    label: '종목',
+    title: '검증할 종목을 선택하세요',
+    description: '시장과 종목을 먼저 정합니다.',
+  },
+  {
+    label: '전략',
+    title: '검증 방식을 선택하세요',
+    description: '일반 백테스트 또는 최적화와 사용할 전략을 고릅니다.',
+  },
+  {
+    label: '설정',
+    title: '기간과 조건을 설정하세요',
+    description: '기본값으로 바로 실행하거나 필요한 값만 조정할 수 있습니다.',
+  },
+  {
+    label: '결과',
+    title: '성과를 핵심 지표부터 확인하세요',
+    description: '수익률과 위험을 먼저 보고 세부 거래는 필요할 때 확인합니다.',
+  },
+] as const
 
 function defaultTicker(market: Market) {
   return market === 'krx' ? '005930' : 'AAPL'
@@ -194,6 +218,7 @@ export function StrategySimulationPage() {
   const [mode, setMode] = useState<SimulationMode>('backtest')
   const [strategy, setStrategy] = useState<StrategyKey>('moving_average')
   const [ticker, setTicker] = useState(defaultTicker('us'))
+  const [selectedQuickTicker, setSelectedQuickTicker] = useState<string | null>(null)
   const [krxExchange, setKrxExchange] = useState<KrxExchange>('auto')
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<KRXSearchResult[]>([])
@@ -237,6 +262,7 @@ export function StrategySimulationPage() {
   const [error, setError] = useState<string | null>(null)
   const [backtestResult, setBacktestResult] = useState<BacktestResult | null>(null)
   const [optimizationResult, setOptimizationResult] = useState<OptimizationResult | null>(null)
+  const [currentStep, setCurrentStep] = useState(0)
 
   function resetResults() {
     setError(null)
@@ -247,6 +273,7 @@ export function StrategySimulationPage() {
   function handleMarketChange(nextMarket: Market) {
     setMarket(nextMarket)
     setTicker(defaultTicker(nextMarket))
+    setSelectedQuickTicker(nextMarket === 'krx' ? defaultTicker(nextMarket) : null)
     setInitialCapital(defaultInitialCapital(nextMarket))
     setFixedAmount(defaultFixedAmount(nextMarket))
     setKrxExchange('auto')
@@ -256,10 +283,21 @@ export function StrategySimulationPage() {
     resetResults()
   }
 
-  function handlePickCompany(company: KRXSearchResult) {
+  function handlePickCompany(company: KRXSearchResult, isQuickPick = false) {
     setTicker(company.ticker)
     setKrxExchange(company.krx_exchange)
+    setSelectedQuickTicker(isQuickPick ? company.ticker : null)
+    setSearchQuery('')
+    setSearchResults([])
+    setSearchError(null)
     resetResults()
+  }
+
+  function handleEnableCompanySearch() {
+    setSelectedQuickTicker(null)
+    setSearchQuery('')
+    setSearchResults([])
+    setSearchError(null)
   }
 
   async function handleSearch() {
@@ -379,6 +417,7 @@ export function StrategySimulationPage() {
             : await apiClient.bollingerBandsBacktest(request as BollingerBandsBacktestRequest)
 
       setBacktestResult(response)
+      setCurrentStep(3)
     } catch (caughtError) {
       if (caughtError instanceof ApiError) {
         setError(caughtError.detail)
@@ -478,6 +517,7 @@ export function StrategySimulationPage() {
             : await apiClient.bollingerBandsOptimize(request as BollingerBandsOptimizationRequest)
 
       setOptimizationResult(response)
+      setCurrentStep(3)
     } catch (caughtError) {
       if (caughtError instanceof ApiError) {
         setError(caughtError.detail)
@@ -499,15 +539,20 @@ export function StrategySimulationPage() {
 
   return (
     <main className="page-shell">
+      <StepFlow
+        pageTitle="전략 연습"
+        steps={SIMULATION_STEPS}
+        currentStep={currentStep}
+        onStepChange={setCurrentStep}
+        nextDisabled={
+          (currentStep === 0 && !ticker.trim())
+          || (currentStep === 2 && !backtestResult && !optimizationResult)
+        }
+        renderActiveChild={false}
+      >
+      {currentStep < 3 ? (
       <section className="content-panel">
-        <p className="content-panel__eyebrow">전략 연습</p>
-        <h2 className="content-panel__title">전략 시뮬레이션</h2>
-        <p className="content-panel__description">
-          백테스트와 최적화로 전략을 검증합니다.
-        </p>
-      </section>
-
-      <section className="content-panel">
+        {currentStep === 0 ? (
         <div className="toolbar-row">
           <div className="segmented-control" role="tablist" aria-label="시장 선택">
             {MARKET_OPTIONS.map((item) => (
@@ -526,7 +571,10 @@ export function StrategySimulationPage() {
             ))}
           </div>
         </div>
+        ) : null}
 
+        {currentStep === 1 ? (
+        <>
         <div className="segmented-control simulation-mode-toggle" role="tablist" aria-label="실행 모드">
           <button
             type="button"
@@ -575,7 +623,10 @@ export function StrategySimulationPage() {
         </div>
 
         <p className="helper-text">{strategyDescription(strategy)}</p>
+        </>
+        ) : null}
 
+        {currentStep === 2 ? (
         <div className="simulation-action-bar">
           <div className="simulation-action-bar__meta">
             <span>{mode === 'backtest' ? '일반 백테스트' : '전략 최적화'}</span>
@@ -596,9 +647,11 @@ export function StrategySimulationPage() {
                 : '최적화 실행'}
           </button>
         </div>
+        ) : null}
 
+        {currentStep === 0 || currentStep === 2 ? (
         <div className="form-stack">
-          {market === 'krx' ? (
+          {currentStep === 0 && market === 'krx' ? (
             <>
               <div>
                 <label className="field-label">대표 종목 빠른 선택</label>
@@ -607,13 +660,22 @@ export function StrategySimulationPage() {
                     <button
                       key={company.ticker}
                       type="button"
-                      className={ticker === company.ticker ? 'chip chip--active' : 'chip'}
-                      onClick={() => handlePickCompany(company)}
+                      className={selectedQuickTicker === company.ticker ? 'chip chip--active' : 'chip'}
+                      onClick={() => handlePickCompany(company, true)}
                     >
                       {company.name}
                     </button>
                   ))}
                 </div>
+                {selectedQuickTicker ? (
+                  <button
+                    type="button"
+                    className="secondary-action quick-pick-search-action"
+                    onClick={handleEnableCompanySearch}
+                  >
+                    다른 종목 검색
+                  </button>
+                ) : null}
               </div>
 
               <div className="field-grid">
@@ -651,12 +713,13 @@ export function StrategySimulationPage() {
                         }
                       }}
                       placeholder="회사명이나 6자리 종목코드"
+                      disabled={Boolean(selectedQuickTicker)}
                     />
                     <button
                       type="button"
                       className="secondary-action"
                       onClick={() => void handleSearch()}
-                      disabled={searchLoading || !searchQuery.trim()}
+                      disabled={Boolean(selectedQuickTicker) || searchLoading || !searchQuery.trim()}
                     >
                       {searchLoading ? '검색 중...' : '검색'}
                     </button>
@@ -685,7 +748,7 @@ export function StrategySimulationPage() {
           ) : null}
 
           <div className="field-grid">
-            <div>
+            <div hidden={currentStep !== 0}>
               <label className="field-label" htmlFor="simulation-ticker">
                 {market === 'krx' ? '종목 코드' : '주식 티커'}
               </label>
@@ -693,13 +756,16 @@ export function StrategySimulationPage() {
                 id="simulation-ticker"
                 className="text-field"
                 value={ticker}
-                onChange={(event) => setTicker(event.target.value.toUpperCase())}
+                onChange={(event) => {
+                  setTicker(event.target.value.toUpperCase())
+                  setSelectedQuickTicker(null)
+                }}
                 placeholder={market === 'krx' ? '005930' : 'AAPL'}
               />
               <p className="helper-text helper-text--tight">{tickerHelpText(market)}</p>
             </div>
 
-            <div>
+            <div hidden={currentStep !== 2}>
               <label className="field-label" htmlFor="simulation-capital">
                 초기 자산
               </label>
@@ -713,6 +779,8 @@ export function StrategySimulationPage() {
             </div>
           </div>
 
+          {currentStep === 2 ? (
+          <>
           <div className="field-grid">
             <div>
               <label className="field-label" htmlFor="simulation-start-date">
@@ -1109,12 +1177,18 @@ export function StrategySimulationPage() {
               </>
             )
           ) : null}
+          </>
+          ) : null}
 
         </div>
+        ) : null}
 
-        {error ? <div className="state-box state-box--error">{error}</div> : null}
+        {currentStep === 2 && error ? <div className="state-box state-box--error">{error}</div> : null}
       </section>
+      ) : null}
 
+      {currentStep === 3 ? (
+      <>
       {backtestResult ? (
         <>
           <section className="content-panel">
@@ -1177,7 +1251,8 @@ export function StrategySimulationPage() {
               </article>
             </div>
 
-            <div className="content-panel content-panel--nested">
+            <details className="content-panel content-panel--nested disclosure-panel">
+              <summary>실행 파라미터 보기</summary>
               <p className="content-panel__eyebrow">실행 파라미터</p>
               <div className="simulation-parameter-list">
                 {Object.entries(backtestResult.strategy_params).map(([key, value]) => (
@@ -1187,10 +1262,11 @@ export function StrategySimulationPage() {
                   </div>
                 ))}
               </div>
-            </div>
+            </details>
           </section>
 
-          <section className="content-panel">
+          <details className="content-panel disclosure-panel">
+            <summary>최근 거래 {backtestResult.trades.length}건 보기</summary>
             <div className="section-block__header">
               <h3>최근 거래 내역</h3>
             </div>
@@ -1214,7 +1290,7 @@ export function StrategySimulationPage() {
                 ))}
               </div>
             )}
-          </section>
+          </details>
         </>
       ) : null}
 
@@ -1254,7 +1330,8 @@ export function StrategySimulationPage() {
               </article>
             </div>
 
-            <div className="content-panel content-panel--nested">
+            <details className="content-panel content-panel--nested disclosure-panel">
+              <summary>최적 파라미터 보기</summary>
               <p className="content-panel__eyebrow">최적 파라미터</p>
               <div className="simulation-parameter-list">
                 {Object.entries(optimizationResult.best_params).map(([key, value]) => (
@@ -1264,10 +1341,11 @@ export function StrategySimulationPage() {
                   </div>
                 ))}
               </div>
-            </div>
+            </details>
           </section>
 
-          <section className="content-panel">
+          <details className="content-panel disclosure-panel">
+            <summary>상위 최적화 결과 보기</summary>
             <div className="section-block__header">
               <h3>상위 최적화 결과</h3>
             </div>
@@ -1292,10 +1370,13 @@ export function StrategySimulationPage() {
                 </article>
               ))}
             </div>
-          </section>
+          </details>
         </>
       ) : null}
+      </>
+      ) : null}
 
+      </StepFlow>
     </main>
   )
 }

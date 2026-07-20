@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { appLogin, getAnonymousKey, requestNotificationAgreement } from '@apps-in-toss/web-bridge'
 
+import { StepFlow } from '../../components/StepFlow'
 import { apiClient } from '../../shared/api/client'
 import { ApiError } from '../../shared/api/http'
 import type {
@@ -81,6 +82,24 @@ const INITIAL_SCORES = {
   tomorrowCatalyst: 0,
   riskControl: 0,
 } as const
+
+const CLOSING_BET_STEPS = [
+  {
+    label: '종목',
+    title: '판정할 종목을 선택하세요',
+    description: '시장과 종목 하나만 고르면 필요한 데이터를 자동으로 모읍니다.',
+  },
+  {
+    label: '판정',
+    title: '점수와 제외 신호를 확인하세요',
+    description: '총점을 먼저 보고, 필요할 때 세부 근거를 확인합니다.',
+  },
+  {
+    label: '알림',
+    title: '원할 때만 알림을 설정하세요',
+    description: '판정 점수가 기준을 넘으면 받을 알림을 저장할 수 있습니다.',
+  },
+] as const
 
 function clampScore(value: number) {
   return Math.max(0, Math.min(100, Math.round(value)))
@@ -489,6 +508,7 @@ export function ClosingBetPage() {
   const [session, setSession] = useState<AppSession | null>(() => readStoredSession())
   const [market, setMarket] = useState<MarketOption>('krx')
   const [ticker, setTicker] = useState(defaultTicker('krx'))
+  const [selectedQuickTicker, setSelectedQuickTicker] = useState<string | null>(defaultTicker('krx'))
   const [krxExchange, setKrxExchange] = useState<KrxExchange>('auto')
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<KRXSearchResult[]>([])
@@ -518,6 +538,7 @@ export function ClosingBetPage() {
   const [notificationAgreementReady, setNotificationAgreementReady] = useState(false)
   const [savingNotification, setSavingNotification] = useState(false)
   const [deletingNotificationId, setDeletingNotificationId] = useState<number | null>(null)
+  const [currentStep, setCurrentStep] = useState(0)
 
   const hasAnalysis = quote !== null || sentiment !== null || sectorSnapshot !== null || stockRows.length > 0
 
@@ -765,11 +786,21 @@ export function ClosingBetPage() {
     setSearchResults(searchLocalKrxCompanies(normalizedQuery, commonKrxCompanies))
   }
 
-  function handlePickCompany(company: KRXSearchResult) {
+  function handlePickCompany(company: KRXSearchResult, isQuickPick = false) {
     setTicker(company.ticker)
     setKrxExchange(company.krx_exchange)
+    setSelectedQuickTicker(isQuickPick ? company.ticker : null)
+    setSearchQuery('')
+    setSearchResults([])
     resetAnalysis()
     setError(null)
+    setSearchError(null)
+  }
+
+  function handleEnableCompanySearch() {
+    setSelectedQuickTicker(null)
+    setSearchQuery('')
+    setSearchResults([])
     setSearchError(null)
   }
 
@@ -816,6 +847,7 @@ export function ClosingBetPage() {
         tomorrowCatalyst: deriveTomorrowCatalyst(sentimentResult),
         riskControl: deriveRiskControl(quoteResult, matchedSector, sentimentResult, stockResult.rows),
       })
+      setCurrentStep(1)
     } catch (caughtError) {
       setError(friendlyApiError(caughtError, '종가베팅 보조 데이터를 불러오지 못했습니다.'))
       resetAnalysis()
@@ -917,6 +949,7 @@ export function ClosingBetPage() {
   function handleMarketChange(nextMarket: MarketOption) {
     setMarket(nextMarket)
     setTicker(defaultTicker(nextMarket))
+    setSelectedQuickTicker(nextMarket === 'krx' ? defaultTicker(nextMarket) : null)
     setKrxExchange('auto')
     setSearchQuery('')
     setSearchResults([])
@@ -927,14 +960,15 @@ export function ClosingBetPage() {
 
   return (
     <main className="page-shell">
-      <section className="content-panel">
-        <p className="content-panel__eyebrow">종가베팅 핵심 판단</p>
-        <h2 className="content-panel__title">종가베팅</h2>
-        <p className="content-panel__description">
-          수급 지속 가능성과 제외 신호를 자동 점검합니다.
-        </p>
-      </section>
-
+      <StepFlow
+        pageTitle="종가베팅"
+        steps={CLOSING_BET_STEPS}
+        currentStep={currentStep}
+        onStepChange={setCurrentStep}
+        nextDisabled={(currentStep === 0 && !hasAnalysis) || (currentStep === 1 && !hasAnalysis)}
+        renderActiveChild={false}
+      >
+      {currentStep === 0 ? (
       <section className="content-panel">
         <div className="toolbar-row toolbar-row--stacked">
           <div className="segmented-control segmented-control--full" role="tablist" aria-label="시장 선택">
@@ -965,13 +999,22 @@ export function ClosingBetPage() {
                     <button
                       key={company.ticker}
                       type="button"
-                      className={ticker === company.ticker ? 'chip chip--active' : 'chip'}
-                      onClick={() => handlePickCompany(company)}
+                      className={selectedQuickTicker === company.ticker ? 'chip chip--active' : 'chip'}
+                      onClick={() => handlePickCompany(company, true)}
                     >
                       {company.name}
                     </button>
                   ))}
                 </div>
+                {selectedQuickTicker ? (
+                  <button
+                    type="button"
+                    className="secondary-action quick-pick-search-action"
+                    onClick={handleEnableCompanySearch}
+                  >
+                    다른 종목 검색
+                  </button>
+                ) : null}
               </div>
 
               <div className="field-grid field-grid--single-when-narrow">
@@ -1009,12 +1052,13 @@ export function ClosingBetPage() {
                         }
                       }}
                       placeholder="회사명 일부나 6자리 종목코드"
+                      disabled={Boolean(selectedQuickTicker)}
                     />
                     <button
                       type="button"
                       className="secondary-action"
                       onClick={() => void handleSearch()}
-                      disabled={searchLoading || !searchQuery.trim()}
+                      disabled={Boolean(selectedQuickTicker) || searchLoading || !searchQuery.trim()}
                     >
                       {searchLoading ? '검색 중...' : '검색'}
                     </button>
@@ -1058,6 +1102,7 @@ export function ClosingBetPage() {
               value={ticker}
               onChange={(event) => {
                 setTicker(normalizeTicker(event.target.value, market))
+                setSelectedQuickTicker(null)
                 resetAnalysis()
               }}
               placeholder={market === 'krx' ? '예: 005930' : '예: NVDA'}
@@ -1078,7 +1123,11 @@ export function ClosingBetPage() {
         </div>
 
         {error ? <div className="state-box state-box--error">{error}</div> : null}
+      </section>
+      ) : null}
 
+      {currentStep === 1 ? (
+      <section className="content-panel">
         <div className={`sentiment-card sentiment-card--${tone}`}>
           <div className="sentiment-card__top">
             <div>
@@ -1134,7 +1183,11 @@ export function ClosingBetPage() {
             ) : null}
           </div>
         ) : null}
+      </section>
+      ) : null}
 
+      {currentStep === 2 ? (
+      <section className="content-panel">
         <div className="content-panel content-panel--nested">
           <p className="content-panel__eyebrow">알림 설정</p>
           <p className="content-panel__description">
@@ -1277,8 +1330,12 @@ export function ClosingBetPage() {
           </div>
         </div>
       </section>
+      ) : null}
 
-      <section className="content-panel">
+      {currentStep === 1 ? (
+      <>
+      <details className="content-panel disclosure-panel">
+        <summary>자동 판정 근거 8개 보기</summary>
         <p className="content-panel__eyebrow">자동 점검 항목</p>
         <h3 className="content-panel__title">자동 판정 항목</h3>
         <div className="diagnostic-list">
@@ -1323,9 +1380,10 @@ export function ClosingBetPage() {
             <p>장 마감 구조 보정</p>
           </article>
         </div>
-      </section>
+      </details>
 
-      <section className="content-panel">
+      <details className="content-panel disclosure-panel">
+        <summary>빠른 해석과 제외 신호 보기</summary>
         <p className="content-panel__eyebrow">빠른 해석</p>
         <div className="content-panel content-panel--nested">
           <p className="content-panel__description">
@@ -1371,7 +1429,10 @@ export function ClosingBetPage() {
           </div>
         </div>
 
-      </section>
+      </details>
+      </>
+      ) : null}
+      </StepFlow>
     </main>
   )
 }

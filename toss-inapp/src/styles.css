@@ -55,7 +55,7 @@ select {
 }
 
 .app-header {
-  padding: 24px 20px 12px;
+  padding: 14px 20px;
   background:
     radial-gradient(circle at top right, rgba(49, 93, 246, 0.16), transparent 42%),
     linear-gradient(180deg, #ffffff 0%, rgba(255, 255, 255, 0.86) 100%);
@@ -84,8 +84,8 @@ select {
   min-height: 28px;
   padding: 0 12px;
   border-radius: 999px;
-  background: #191f28;
-  color: #ffffff;
+  background: #e8f3ff;
+  color: #1b64da;
   font-size: 12px;
   font-weight: 700;
 }
@@ -397,6 +397,172 @@ select {
   padding: 18px 18px 18px;
 }
 
+.step-flow {
+  display: grid;
+  gap: 18px;
+}
+
+.step-flow__header {
+  margin-top: 18px;
+  padding: 20px;
+  border-radius: 24px;
+  background: linear-gradient(145deg, #ffffff 0%, #f4f8ff 100%);
+  border: 1px solid rgba(27, 100, 218, 0.08);
+}
+
+.step-flow__progress-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 12px;
+}
+
+.step-flow__count {
+  color: #1b64da;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.step-flow__progress {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #dfe6ee;
+}
+
+.step-flow__progress span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #3182f6;
+  transition: width 180ms ease;
+}
+
+.step-flow__step-list {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.step-flow__step-list::-webkit-scrollbar {
+  display: none;
+}
+
+.step-flow__step {
+  flex: 0 0 auto;
+  padding: 7px 11px;
+  border: 0;
+  border-radius: 999px;
+  background: #eef2f6;
+  color: #6b7684;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.step-flow__step--active {
+  background: #191f28;
+  color: #ffffff;
+}
+
+.step-flow__eyebrow {
+  margin: 20px 0 6px;
+  color: #1b64da;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.step-flow__title {
+  margin: 0;
+  font-size: 22px;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
+  word-break: keep-all;
+}
+
+.step-flow__description {
+  margin: 8px 0 0;
+  color: #4e5968;
+  font-size: 14px;
+  line-height: 1.5;
+  word-break: keep-all;
+}
+
+.step-flow__content {
+  min-width: 0;
+  animation: step-flow-enter 180ms ease-out;
+}
+
+.step-flow__content > .content-panel:first-child,
+.step-flow__content > .hero-section:first-child {
+  margin-top: 0;
+}
+
+.step-flow__actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding: 4px 0 2px;
+}
+
+.step-flow__action {
+  width: 100%;
+}
+
+.disclosure-panel {
+  margin-top: 16px;
+  padding: 16px 18px;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(25, 31, 40, 0.08);
+}
+
+.disclosure-panel > summary {
+  cursor: pointer;
+  color: #333d4b;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.4;
+  list-style: none;
+}
+
+.disclosure-panel > summary::-webkit-details-marker {
+  display: none;
+}
+
+.disclosure-panel > summary::after {
+  content: '보기';
+  float: right;
+  margin-left: 12px;
+  color: #1b64da;
+  font-size: 13px;
+}
+
+.disclosure-panel[open] > summary::after {
+  content: '접기';
+}
+
+.disclosure-panel[open] > summary {
+  margin-bottom: 16px;
+}
+
+.disclosure-panel.content-panel {
+  margin-top: 18px;
+}
+
+@keyframes step-flow-enter {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 .viral-reward-card {
   background:
     radial-gradient(circle at top right, rgba(49, 130, 246, 0.2), transparent 42%),
@@ -684,6 +850,20 @@ select {
   color: #191f28;
 }
 
+.text-field:disabled {
+  border-color: rgba(25, 31, 40, 0.06);
+  background: #f2f4f6;
+  color: #8b95a1;
+  cursor: not-allowed;
+  opacity: 1;
+  -webkit-text-fill-color: #8b95a1;
+}
+
+.text-field:disabled::placeholder {
+  color: #b0b8c1;
+  -webkit-text-fill-color: #b0b8c1;
+}
+
 .input-action-row {
   display: grid;
   grid-template-columns: 1fr auto;
@@ -868,6 +1048,10 @@ select {
 .secondary-action--danger {
   background: #fff1f3;
   color: #b42318;
+}
+
+.quick-pick-search-action {
+  margin-top: 12px;
 }
 
 .paper-summary-grid {
