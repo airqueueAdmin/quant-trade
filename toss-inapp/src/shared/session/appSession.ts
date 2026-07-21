@@ -3,6 +3,7 @@ const SESSION_STORAGE_KEY = 'quant.toss_inapp.app_session'
 export type AppSession = {
   accountId: string
   sessionToken: string
+  identitySource?: 'toss_user' | 'device'
 }
 
 function isValidSession(value: unknown): value is AppSession {
@@ -15,7 +16,10 @@ function isValidSession(value: unknown): value is AppSession {
     typeof candidate.accountId === 'string' &&
     candidate.accountId.length >= 3 &&
     typeof candidate.sessionToken === 'string' &&
-    candidate.sessionToken.length >= 10
+    candidate.sessionToken.length >= 10 &&
+    (candidate.identitySource === undefined ||
+      candidate.identitySource === 'toss_user' ||
+      candidate.identitySource === 'device')
   )
 }
 

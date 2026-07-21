@@ -706,6 +706,18 @@ class TossLoginExchangeRequest(BaseModel):
         return normalized
 
 
+class TossUserSessionRequest(BaseModel):
+    anonymous_key: str = Field(min_length=8, max_length=512)
+
+    @field_validator("anonymous_key")
+    @classmethod
+    def validate_anonymous_key(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("anonymous_key is required")
+        return normalized
+
+
 def normalize_paper_account_id(value: str) -> str:
     normalized = value.strip()
     if not normalized:
@@ -735,6 +747,16 @@ def normalize_market_ticker_input(value: str, market: str) -> str:
 
 def build_session_account_id() -> str:
     return f"paper-{secrets.token_hex(6)}"
+
+
+def build_toss_user_account_id(anonymous_key: str) -> str:
+    """Derive a stable account id without storing or exposing the Toss user key."""
+    digest = hmac.new(
+        APP_SESSION_SECRET.encode("utf-8"),
+        f"toss-user:{anonymous_key}".encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    return f"paper-toss-{digest[:32]}"
 
 
 def encode_session_token(account_id: str) -> str:
@@ -2840,6 +2862,18 @@ def session_bootstrap(x_app_session: str | None = Header(default=None, alias="X-
 
     return {
         "auth_mode": "session_account",
+        "identity_source": "toss_user" if account_id.startswith("paper-toss-") else "device",
+        "account_id": account_id,
+        "session_token": encode_session_token(account_id),
+    }
+
+
+@app.post("/session/toss-user")
+def session_toss_user(request: TossUserSessionRequest) -> dict[str, Any]:
+    account_id = build_toss_user_account_id(request.anonymous_key)
+    return {
+        "auth_mode": "session_account",
+        "identity_source": "toss_user",
         "account_id": account_id,
         "session_token": encode_session_token(account_id),
     }
@@ -2850,6 +2884,7 @@ def session_rotate() -> dict[str, Any]:
     account_id = build_session_account_id()
     return {
         "auth_mode": "session_account",
+        "identity_source": "device",
         "account_id": account_id,
         "session_token": encode_session_token(account_id),
     }

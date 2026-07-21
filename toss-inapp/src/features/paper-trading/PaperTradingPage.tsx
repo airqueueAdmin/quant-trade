@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { getAnonymousKey } from '@apps-in-toss/web-bridge'
 
-import { StepFlow } from '../../components/StepFlow'
 import { apiClient } from '../../shared/api/client'
 import { ApiError } from '../../shared/api/http'
 import type { KrxExchange, KRXSearchResult, PaperTradingState, QuoteSnapshot } from '../../shared/api/types'
@@ -16,29 +16,6 @@ const COMMON_KRX_COMPANIES: KRXSearchResult[] = [
   { name: '카카오', ticker: '035720', krx_exchange: 'kospi', display_name: '카카오 (035720, KOSPI)' },
   { name: '알테오젠', ticker: '196170', krx_exchange: 'kosdaq', display_name: '알테오젠 (196170, KOSDAQ)' },
 ]
-
-const PAPER_TRADING_STEPS = [
-  {
-    label: '계좌',
-    title: '연습 계좌 상태를 확인하세요',
-    description: '현재 자산만 먼저 확인하고 다음 단계로 이동합니다.',
-  },
-  {
-    label: '종목',
-    title: '연습할 종목을 하나 선택하세요',
-    description: '종목을 고르면 최근 종가를 불러옵니다.',
-  },
-  {
-    label: '주문',
-    title: '매수 또는 매도를 연습하세요',
-    description: '수량과 예상 주문금액을 확인한 뒤 모의 주문을 반영합니다.',
-  },
-  {
-    label: '기록',
-    title: '보유 종목과 거래 기록을 확인하세요',
-    description: '주문 결과와 현재 손익을 한곳에서 확인할 수 있습니다.',
-  },
-] as const
 
 function searchLocalCompanies(query: string, companies: KRXSearchResult[]) {
   const normalizedQuery = query.trim().toLowerCase()
@@ -122,11 +99,10 @@ function formatTradeTime(value?: string | null) {
 
 export function PaperTradingPage() {
   const [session, setSession] = useState<AppSession | null>(() => readStoredSession())
-  const [allowSessionBootstrap, setAllowSessionBootstrap] = useState(() => readStoredSession() === null)
   const [selectedCompany, setSelectedCompany] = useState<KRXSearchResult>(COMMON_KRX_COMPANIES[0])
-  const [selectedQuickTicker, setSelectedQuickTicker] = useState<string | null>(COMMON_KRX_COMPANIES[0].ticker)
   const [paperState, setPaperState] = useState<PaperTradingState | null>(null)
-  const [sessionLoading, setSessionLoading] = useState(false)
+  const [sessionLoading, setSessionLoading] = useState(true)
+  const [identityRefreshToken, setIdentityRefreshToken] = useState(0)
   const [stateLoading, setStateLoading] = useState(true)
   const [stateError, setStateError] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
@@ -142,25 +118,16 @@ export function PaperTradingPage() {
   const [orderShares, setOrderShares] = useState('1')
   const [submittingOrder, setSubmittingOrder] = useState(false)
   const [resetting, setResetting] = useState(false)
+  const [resetConfirming, setResetConfirming] = useState(false)
   const [refreshToken, setRefreshToken] = useState(0)
   const [actionMessage, setActionMessage] = useState<string | null>(null)
-  const [currentStep, setCurrentStep] = useState(0)
   const companySearchInputRef = useRef<HTMLInputElement>(null)
 
   const commonKrxCompanies = useMemo(() => COMMON_KRX_COMPANIES, [])
 
-  function handleSelectCompany(company: KRXSearchResult, isQuickPick = false) {
+  function handleSelectCompany(company: KRXSearchResult) {
     setSelectedCompany(company)
-    setSelectedQuickTicker(isQuickPick ? company.ticker : null)
-    setIsCompanySearchOpen(!isQuickPick)
-    setSearchQuery('')
-    setSearchResults([])
-    setSearchError(null)
-  }
-
-  function handleOpenCompanySearch() {
-    setSelectedQuickTicker(null)
-    setIsCompanySearchOpen(true)
+    setIsCompanySearchOpen(false)
     setSearchQuery('')
     setSearchResults([])
     setSearchError(null)
@@ -169,6 +136,7 @@ export function PaperTradingPage() {
   function handleSearchQueryChange(value: string) {
     setSearchQuery(value)
     setSearchError(null)
+    setIsCompanySearchOpen(Boolean(value.trim()))
     setSearchResults(searchLocalCompanies(value, commonKrxCompanies))
   }
 
@@ -182,26 +150,52 @@ export function PaperTradingPage() {
     const abortController = new AbortController()
 
     async function ensureSession() {
-      if (session || !allowSessionBootstrap) {
-        return
-      }
-
       setSessionLoading(true)
       setStateError(null)
 
       try {
-        const response = await apiClient.bootstrapSession()
+        let anonymousKeyResult: Awaited<ReturnType<typeof getAnonymousKey>>
+        try {
+          anonymousKeyResult = await getAnonymousKey()
+        } catch {
+          anonymousKeyResult = undefined
+        }
         if (abortController.signal.aborted) {
           return
         }
 
+        if (anonymousKeyResult && anonymousKeyResult !== 'ERROR' && anonymousKeyResult.type === 'HASH') {
+          const response = await apiClient.tossUserSession(anonymousKeyResult.hash)
+          if (abortController.signal.aborted) {
+            return
+          }
+          const nextSession: AppSession = {
+            accountId: response.account_id,
+            sessionToken: response.session_token,
+            identitySource: response.identity_source,
+          }
+          writeStoredSession(nextSession)
+          setSession(nextSession)
+          return
+        }
+
+        const storedSession = readStoredSession()
+        if (storedSession) {
+          setSession(storedSession)
+          return
+        }
+
+        const response = await apiClient.bootstrapSession()
+        if (abortController.signal.aborted) {
+          return
+        }
         const nextSession = {
           accountId: response.account_id,
           sessionToken: response.session_token,
+          identitySource: response.identity_source,
         }
         writeStoredSession(nextSession)
         setSession(nextSession)
-        setAllowSessionBootstrap(false)
       } catch (caughtError) {
         if (abortController.signal.aborted) {
           return
@@ -222,13 +216,13 @@ export function PaperTradingPage() {
 
     void ensureSession()
     return () => abortController.abort()
-  }, [allowSessionBootstrap, session])
+  }, [identityRefreshToken])
 
   useEffect(() => {
     const abortController = new AbortController()
 
     async function loadPaperState() {
-      if (!session) {
+      if (sessionLoading || !session) {
         setStateLoading(false)
         setPaperState(null)
         return
@@ -246,10 +240,10 @@ export function PaperTradingPage() {
         }
         if (caughtError instanceof ApiError && caughtError.status === 401) {
           clearStoredSession()
-          setAllowSessionBootstrap(false)
           setSession(null)
-          setStateError('연결이 끊겼습니다. 다시 연결해 주세요.')
+          setStateError('계좌 연결을 다시 확인하고 있습니다.')
           setPaperState(null)
+          setIdentityRefreshToken((value) => value + 1)
           return
         }
         if (caughtError instanceof ApiError) {
@@ -269,7 +263,7 @@ export function PaperTradingPage() {
 
     void loadPaperState()
     return () => abortController.abort()
-  }, [refreshToken, session])
+  }, [refreshToken, session, sessionLoading])
 
   useEffect(() => {
     const abortController = new AbortController()
@@ -379,15 +373,6 @@ export function PaperTradingPage() {
     }
   }, [paperState, refreshToken])
 
-  async function handleReconnectSession() {
-    clearStoredSession()
-    setSession(null)
-    setPaperState(null)
-    setStateError(null)
-    setActionMessage(null)
-    setAllowSessionBootstrap(true)
-  }
-
   async function handleSearch() {
     if (!isCompanySearchOpen) {
       return
@@ -438,6 +423,7 @@ export function PaperTradingPage() {
     try {
       await apiClient.paperTradingReset(session.sessionToken)
       setActionMessage('모의 계좌를 초기화했습니다.')
+      setResetConfirming(false)
       setRefreshToken((value) => value + 1)
     } catch (caughtError) {
       if (caughtError instanceof ApiError) {
@@ -449,34 +435,6 @@ export function PaperTradingPage() {
       }
     } finally {
       setResetting(false)
-    }
-  }
-
-  async function handleRotateAccount() {
-    setActionMessage(null)
-    setStateError(null)
-
-    try {
-      const response = await apiClient.rotateSession()
-      const nextSession = {
-        accountId: response.account_id,
-        sessionToken: response.session_token,
-      }
-      writeStoredSession(nextSession)
-      setSession(nextSession)
-      setPaperState(null)
-      setStateError(null)
-      setSearchError(null)
-      setActionMessage('이 기기에서 새 투자 연습 계정을 시작했습니다.')
-      setRefreshToken((value) => value + 1)
-    } catch (caughtError) {
-      if (caughtError instanceof ApiError) {
-        setStateError(caughtError.detail)
-      } else if (caughtError instanceof Error) {
-        setStateError(caughtError.message)
-      } else {
-        setStateError('새 투자 연습 계정을 시작하지 못했습니다.')
-      }
     }
   }
 
@@ -508,7 +466,6 @@ export function PaperTradingPage() {
       })
       setActionMessage(`${orderSide === 'buy' ? '매수' : '매도'} 주문을 모의 반영했습니다.`)
       setRefreshToken((value) => value + 1)
-      setCurrentStep(3)
     } catch (caughtError) {
       if (caughtError instanceof ApiError) {
         setActionMessage(caughtError.detail)
@@ -545,66 +502,40 @@ export function PaperTradingPage() {
       : hasInsufficientShares
         ? '보유 수량이 부족합니다. 현재 보유 주식을 확인하세요.'
         : null
+  const isTossLinked = session?.identitySource === 'toss_user' || session?.accountId.startsWith('paper-toss-')
+  const accountSuffix = session?.accountId.slice(-6).toUpperCase() ?? '------'
 
   return (
-    <main className="page-shell">
-      <StepFlow
-        pageTitle="모의투자"
-        steps={PAPER_TRADING_STEPS}
-        currentStep={currentStep}
-        onStepChange={setCurrentStep}
-        nextDisabled={
-          (currentStep === 0 && (sessionLoading || stateLoading || !paperState))
-          || (currentStep === 1 && (quoteLoading || !quote))
-        }
-      >
-      <section className="content-panel">
-        <div className="account-strip">
+    <main className="page-shell paper-page">
+      <header className="paper-page__header">
+        <p className="paper-page__eyebrow">모의투자</p>
+        <h1>내 모의계좌</h1>
+        <p>자산을 확인하고 바로 주문을 연습해보세요.</p>
+      </header>
+
+      <section className="paper-account-card" aria-label="모의계좌 요약">
+        <div className="paper-account-card__top">
           <div>
-            <p className="account-strip__label">투자 연습 공간</p>
-            <strong className="account-strip__value">이 기기에서 이어서 사용 중</strong>
-            <p className="account-strip__description">
-              기록과 자산 상태가 이 기기에 저장됩니다.
-            </p>
+            <p className="account-strip__label">총 자산</p>
+            <strong className="paper-account-card__assets">{paperState ? formatKrw(totalAssets) : '-'}</strong>
           </div>
-          <div className="paper-actions">
-            <button
-              type="button"
-              className="secondary-action"
-              onClick={() => setRefreshToken((value) => value + 1)}
-              disabled={!session}
-            >
-              상태 새로고침
-            </button>
-            <button
-              type="button"
-              className="secondary-action"
-              onClick={() => void handleReconnectSession()}
-            >
-              다시 연결
-            </button>
-            <button
-              type="button"
-              className="secondary-action"
-              onClick={() => void handleRotateAccount()}
-            >
-              새 계정 시작
-            </button>
-            <button
-              type="button"
-              className="secondary-action secondary-action--danger"
-              onClick={() => void handleResetAccount()}
-              disabled={resetting}
-            >
-              {resetting ? '초기화 중...' : '모의 계좌 초기화'}
-            </button>
-          </div>
+          <span className={isTossLinked ? 'paper-account-badge paper-account-badge--linked' : 'paper-account-badge'}>
+            {isTossLinked ? '토스 계정 연결됨' : '기기 전용 계좌'}
+          </span>
         </div>
+
+        {paperState ? (
+          <div className="paper-account-card__return">
+            <span>누적 손익 {formatKrw(totalPnl)}</span>
+            <strong className={totalReturnPct >= 0 ? 'value-positive' : 'value-negative'}>
+              {formatPct(totalReturnPct)}
+            </strong>
+          </div>
+        ) : null}
 
         {sessionLoading ? <div className="state-box">투자 연습 공간을 준비하는 중입니다...</div> : null}
         {stateLoading && !paperState ? <div className="state-box">모의투자 상태를 불러오는 중입니다...</div> : null}
         {stateError ? <div className="state-box state-box--error">{stateError}</div> : null}
-        {actionMessage ? <div className="state-box">{actionMessage}</div> : null}
 
         {paperState && !stateError ? (
           <div className="paper-summary-grid">
@@ -616,45 +547,65 @@ export function PaperTradingPage() {
               <span className="summary-mini-card__label">보유 평가금액</span>
               <strong className="summary-mini-card__value">{formatKrw(holdingsValue)}</strong>
             </article>
-            <article className="summary-mini-card">
-              <span className="summary-mini-card__label">총 자산</span>
-              <strong className="summary-mini-card__value">{formatKrw(totalAssets)}</strong>
-            </article>
-            <article className="summary-mini-card">
-              <span className="summary-mini-card__label">누적 수익률</span>
-              <strong className="summary-mini-card__value">{formatPct(totalReturnPct)}</strong>
-            </article>
           </div>
         ) : null}
+
+        <details className="paper-account-management">
+          <summary>계좌 관리</summary>
+          <div className="paper-account-management__body">
+            <div className="paper-account-identity">
+              <span>계좌 번호</span>
+              <strong>모의 · {accountSuffix}</strong>
+              <p>
+                {isTossLinked
+                  ? '토스 사용자 키로 안전하게 연결되어 다른 기기에서도 같은 기록을 불러옵니다.'
+                  : '토스 앱에서 열면 사용자 키에 연결되어 다른 기기에서도 이어볼 수 있습니다.'}
+              </p>
+            </div>
+            {!resetConfirming ? (
+              <button
+                type="button"
+                className="secondary-action secondary-action--danger"
+                onClick={() => setResetConfirming(true)}
+              >
+                계좌 초기화
+              </button>
+            ) : (
+              <div className="paper-reset-confirm">
+                <p>보유 종목과 거래 내역을 모두 지우고 시작 금액으로 되돌릴까요?</p>
+                <div>
+                  <button type="button" className="secondary-action" onClick={() => setResetConfirming(false)}>
+                    취소
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-action secondary-action--danger"
+                    onClick={() => void handleResetAccount()}
+                    disabled={resetting}
+                  >
+                    {resetting ? '초기화 중...' : '초기화하기'}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </details>
       </section>
 
-      <details className="content-panel disclosure-panel">
-        <summary>보유 종목 {holdings.length}개 보기</summary>
-        <div className="section-block__header">
-          <h3>종목 선택</h3>
-        </div>
+      {actionMessage ? <div className="state-box paper-action-message">{actionMessage}</div> : null}
 
-        <div className="chip-row">
-          {commonKrxCompanies.map((company) => (
-            <button
-              key={company.ticker}
-              type="button"
-              className={
-                selectedQuickTicker === company.ticker ? 'chip chip--active' : 'chip'
-              }
-              onClick={() => handleSelectCompany(company, true)}
-            >
-              {company.name}
-            </button>
-          ))}
+      <section className="content-panel paper-order-panel">
+        <div className="section-block__header">
+          <div>
+            <p className="content-panel__eyebrow">주문 연습</p>
+            <h2 className="content-panel__title">어떤 종목을 거래할까요?</h2>
+          </div>
         </div>
 
         <p id="paper-company-search-help" className="helper-text helper-text--tight">
-          {selectedQuickTicker
-            ? `${selectedCompany.name} 빠른 선택됨`
-            : searchResults.length > 0
-              ? '검색 결과에서 종목을 선택하세요.'
-              : `${selectedCompany.name} 선택됨 · 다른 종목을 검색할 수 있습니다.`}
+          {searchResults.length > 0
+            ? '검색 결과에서 종목을 선택하세요.'
+            : `${selectedCompany.name} 선택됨 · 회사명이나 종목코드로 바꿀 수 있습니다.`}
         </p>
 
         <div className="paper-company-search">
@@ -670,7 +621,6 @@ export function PaperTradingPage() {
                 }
               }}
               placeholder="회사명이나 6자리 종목코드"
-              disabled={Boolean(selectedQuickTicker)}
               aria-describedby="paper-company-search-help"
               aria-controls="paper-company-search-results"
               aria-expanded={isCompanySearchOpen && searchResults.length > 0}
@@ -680,7 +630,7 @@ export function PaperTradingPage() {
               type="button"
               className="secondary-action"
               onClick={() => void handleSearch()}
-              disabled={Boolean(selectedQuickTicker) || searchLoading || !searchQuery.trim()}
+              disabled={searchLoading || !searchQuery.trim()}
             >
               {searchLoading ? '검색 중...' : '검색'}
             </button>
@@ -710,12 +660,6 @@ export function PaperTradingPage() {
           ) : null}
         </div>
 
-        {selectedQuickTicker ? (
-          <button type="button" className="secondary-action" onClick={handleOpenCompanySearch}>
-            다른 종목 찾기
-          </button>
-        ) : null}
-
         {searchError ? <div className="state-box state-box--error">{searchError}</div> : null}
 
         {quoteLoading ? <div className="state-box">현재가를 불러오는 중입니다...</div> : null}
@@ -740,12 +684,11 @@ export function PaperTradingPage() {
             </div>
           </div>
         ) : null}
-      </details>
+      </section>
 
-      <details className="content-panel disclosure-panel">
-        <summary>거래 내역 {paperState?.trades.length ?? 0}건 보기</summary>
+      <section className="content-panel paper-order-panel">
         <div className="section-block__header">
-          <h3>모의 주문</h3>
+          <h2 className="content-panel__title">주문 수량을 정해주세요</h2>
         </div>
 
         <div className="field-grid">
@@ -808,7 +751,9 @@ export function PaperTradingPage() {
           onClick={() => void handleSubmitOrder()}
           disabled={submittingOrder || !quote || Boolean(orderBlockedReason)}
         >
-          {submittingOrder ? '주문 반영 중...' : '주문 반영'}
+          {submittingOrder
+            ? '주문 반영 중...'
+            : `${selectedCompany.name} ${orderSide === 'buy' ? '매수' : '매도'}하기`}
         </button>
 
         <div className="content-panel content-panel--nested">
@@ -816,12 +761,11 @@ export function PaperTradingPage() {
           <ul className="bullet-list">
             <li>국내주식의 최근 종가를 사용합니다.</li>
             <li>수수료·세금·슬리피지는 제외됩니다.</li>
-            <li>연습 계정은 기기별로 관리됩니다.</li>
+            <li>{isTossLinked ? '거래 기록은 토스 사용자 계정에 연결됩니다.' : '현재 거래 기록은 이 기기에 저장됩니다.'}</li>
           </ul>
         </div>
-      </details>
+      </section>
 
-      <>
       <section className="content-panel">
         <div className="section-block__header">
           <h3>보유 종목</h3>
@@ -858,10 +802,8 @@ export function PaperTradingPage() {
         )}
       </section>
 
-      <section className="content-panel">
-        <div className="section-block__header">
-          <h3>거래 내역</h3>
-        </div>
+      <details className="content-panel disclosure-panel paper-trade-history">
+        <summary>거래 내역 {paperState?.trades.length ?? 0}건</summary>
 
         {!paperState || paperState.trades.length === 0 ? (
           <div className="state-box">아직 반영된 모의 주문이 없습니다.</div>
@@ -886,9 +828,7 @@ export function PaperTradingPage() {
             ))}
           </div>
         )}
-      </section>
-      </>
-      </StepFlow>
+      </details>
     </main>
   )
 }

@@ -1,6 +1,6 @@
 # Backend Integration Notes
 
-Last updated: 2026-06-30
+Last updated: 2026-07-20
 
 ## Goal
 
@@ -62,21 +62,22 @@ Covered endpoints:
 
 ## Remaining backend gaps before real deployment
 
-### 1. Authentication
+### 1. Account identity
 
-Current paper trading uses a backend-issued session account without real end-user authentication.
+Paper trading now prefers the Apps in Toss anonymous user key and derives a stable, pseudonymous account id on the backend. The browser-only development path still uses a local session account.
 
 Implication:
 
-- suitable for internal demo, staging, and browser-persisted session continuity
-- still not sufficient for real in-app user identity/account ownership
+- the same Toss user resolves to the same mock-investing account across devices
+- the raw Toss key is not persisted in the paper-trading account tables or returned to the client
+- profile fields are not collected; stronger OAuth-backed authentication can be added separately if the product later needs verified profile data
 
 Current frontend exposure:
 
 - `GET /app-config` returns `auth_mode: session_account`
-- `POST /session/bootstrap` returns a backend-signed session token plus paper-trading account id
-- the home page surfaces this as a visible staging constraint
-- the current web client persists that session locally per browser
+- `POST /session/toss-user` exchanges the Apps in Toss anonymous user key for a stable, backend-signed paper-trading session. The raw Toss key is never stored as the account id.
+- `POST /session/bootstrap` remains the browser-development fallback and returns a device-local backend-signed session.
+- the web client caches the signed session locally and re-resolves it from the Toss user key when available
 
 ### 2. Request latency
 

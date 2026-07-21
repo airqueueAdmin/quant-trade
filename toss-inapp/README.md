@@ -33,6 +33,8 @@ npm run build
 - `VITE_BANNER_AD_GROUP_ID`: 운영용 리스트형 배너 광고 그룹 ID. 로컬 개발에서는 공식 테스트 ID를 강제로 사용합니다.
 - `VITE_CONTACTS_VIRAL_MODULE_ID`: 앱인토스 콘솔에서 발급한 공유 리워드 ID입니다. 값이 없으면 홈의 공유 리워드 영역을 표시하지 않습니다.
 
+모의투자 계좌는 토스 앱에서 `getAnonymousKey`로 받은 사용자 고유 키를 서버에서 가명화해 연결합니다. 브라우저 개발 환경에서는 기존 기기 세션 계좌로 자동 대체됩니다. 운영 환경의 `APP_SESSION_SECRET`은 계좌 ID 파생과 세션 서명에 함께 사용되므로 반드시 고정된 값으로 관리해야 합니다.
+
 광고 테스트:
 - 로컬 개발 서버는 전면형 `ait-ad-test-interstitial-id`, 배너형 `ait-ad-test-banner-id`를 사용합니다.
 - 콘솔 QR 테스트용 production 빌드에서는 두 환경 변수를 공식 테스트 ID로 덮어써서 빌드합니다.

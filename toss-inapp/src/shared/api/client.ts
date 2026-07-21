@@ -53,6 +53,13 @@ export const apiClient = {
     })
   },
 
+  tossUserSession(anonymousKey: string) {
+    return apiRequest<SessionBootstrapResponse>('/session/toss-user', {
+      method: 'POST',
+      body: { anonymous_key: anonymousKey },
+    })
+  },
+
   rotateSession() {
     return apiRequest<SessionBootstrapResponse>('/session/rotate', {
       method: 'POST',

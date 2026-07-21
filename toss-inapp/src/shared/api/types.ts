@@ -45,6 +45,7 @@ export type TossLoginUserKeyResponse = {
 
 export type SessionBootstrapResponse = {
   auth_mode: 'session_account'
+  identity_source: 'toss_user' | 'device'
   account_id: string
   session_token: string
 }
