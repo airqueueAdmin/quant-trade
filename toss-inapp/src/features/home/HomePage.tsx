@@ -4,6 +4,7 @@ import { StatusCard } from '../../components/StatusCard'
 import { StepFlow } from '../../components/StepFlow'
 import { env } from '../../shared/config/env'
 import { ContactsViralCard } from '../../shared/rewards/ContactsViralCard'
+import { WatchlistCard } from './WatchlistCard'
 
 const HOME_STEPS = [
   {
@@ -28,6 +29,8 @@ export function HomePage() {
 
   return (
     <main className="page-shell">
+      <WatchlistCard />
+
       <StepFlow
         pageTitle="처음 시작하기"
         steps={HOME_STEPS}

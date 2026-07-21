@@ -6,6 +6,7 @@ import { ApiError } from '../../shared/api/http'
 import type { KrxExchange, KRXSearchResult, Market, SentimentResult } from '../../shared/api/types'
 import { useFullScreenAd } from '../../shared/ads/useFullScreenAd'
 import { env } from '../../shared/config/env'
+import { useWatchlist } from '../../shared/watchlist/useWatchlist'
 
 const MARKET_OPTIONS: Array<{ value: Market; label: string }> = [
   { value: 'us', label: '미국주식' },
@@ -81,8 +82,30 @@ function scoreLabel(score: number) {
   return '부정 우세'
 }
 
+function formatNewsDate(value?: string) {
+  if (!value) {
+    return '날짜 미상'
+  }
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) {
+    return value.slice(0, 16).replace('T', ' ')
+  }
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Seoul',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(parsed)
+  const values = Object.fromEntries(parts.filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]))
+  return `${values.year}-${values.month}-${values.day} ${values.hour}:${values.minute}`
+}
+
 export function AnalysisPage() {
   const analysisAd = useFullScreenAd(env.ads.interstitialAdGroupId)
+  const { items: watchlist } = useWatchlist()
   const [market, setMarket] = useState<Market>('us')
   const [krxExchange, setKrxExchange] = useState<KrxExchange>('auto')
   const [ticker, setTicker] = useState(defaultTicker('us'))
@@ -159,6 +182,22 @@ export function AnalysisPage() {
     setSearchError(null)
   }
 
+  function handlePickWatchlist(itemId: string) {
+    const item = watchlist.find((candidate) => candidate.id === itemId)
+    if (!item) {
+      return
+    }
+    setMarket(item.market)
+    setTicker(item.ticker)
+    setKrxExchange(item.krxExchange)
+    setSelectedQuickTicker(null)
+    setSearchQuery('')
+    setSearchResults([])
+    setSearchError(null)
+    setAnalysisError(null)
+    setResult(null)
+  }
+
   async function handleAnalyze() {
     const normalizedTicker = ticker.trim()
     if (!normalizedTicker) {
@@ -221,6 +260,26 @@ export function AnalysisPage() {
 
         <section className="content-panel">
           <div className="form-stack">
+            {watchlist.length > 0 ? (
+              <div className="watchlist-loader">
+                <label className="field-label" htmlFor="analysis-watchlist">관심종목에서 불러오기</label>
+                <select
+                  id="analysis-watchlist"
+                  className="text-field"
+                  value=""
+                  onChange={(event) => handlePickWatchlist(event.target.value)}
+                >
+                  <option value="">등록한 관심종목 선택</option>
+                  {watchlist.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      [{item.market === 'krx' ? '국내' : '미국'}] {item.name} ({item.ticker})
+                    </option>
+                  ))}
+                </select>
+                <p className="helper-text helper-text--tight">홈에서 등록한 시장과 종목 정보를 그대로 적용합니다.</p>
+              </div>
+            ) : null}
+
             {market === 'krx' ? (
               <>
                 <div>
@@ -377,7 +436,11 @@ export function AnalysisPage() {
                         rel="noreferrer"
                       >
                         <strong>{article.title}</strong>
-                        <span>{article.source ?? '원문 보기'}</span>
+                        <span className="article-list__meta">
+                          <span>{article.source ?? '뉴스'}</span>
+                          <time dateTime={article.published_at}>{formatNewsDate(article.published_at)}</time>
+                          <b>원문 보기</b>
+                        </span>
                       </a>
                     ))}
                   </div>

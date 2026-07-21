@@ -18,6 +18,7 @@ import type {
   SentimentResult,
 } from '../../shared/api/types'
 import { clearStoredSession, readStoredSession, writeStoredSession, type AppSession } from '../../shared/session/appSession'
+import { useWatchlist } from '../../shared/watchlist/useWatchlist'
 
 type MarketOption = Extract<Market, 'krx' | 'us'>
 
@@ -505,6 +506,7 @@ function recentStockWindow() {
 }
 
 export function ClosingBetPage() {
+  const { items: watchlist } = useWatchlist()
   const [session, setSession] = useState<AppSession | null>(() => readStoredSession())
   const [market, setMarket] = useState<MarketOption>('krx')
   const [ticker, setTicker] = useState(defaultTicker('krx'))
@@ -958,6 +960,22 @@ export function ClosingBetPage() {
     setError(null)
   }
 
+  function handlePickWatchlist(itemId: string) {
+    const item = watchlist.find((candidate) => candidate.id === itemId)
+    if (!item) {
+      return
+    }
+    setMarket(item.market)
+    setTicker(item.ticker)
+    setSelectedQuickTicker(null)
+    setKrxExchange(item.krxExchange)
+    setSearchQuery('')
+    setSearchResults([])
+    setSearchError(null)
+    resetAnalysis()
+    setError(null)
+  }
+
   return (
     <main className="page-shell">
       <StepFlow
@@ -970,6 +988,26 @@ export function ClosingBetPage() {
       >
       {currentStep === 0 ? (
       <section className="content-panel">
+        {watchlist.length > 0 ? (
+          <div className="watchlist-loader watchlist-loader--standalone">
+            <label className="field-label" htmlFor="closing-bet-watchlist">관심종목에서 불러오기</label>
+            <select
+              id="closing-bet-watchlist"
+              className="text-field"
+              value=""
+              onChange={(event) => handlePickWatchlist(event.target.value)}
+            >
+              <option value="">등록한 관심종목 선택</option>
+              {watchlist.map((item) => (
+                <option key={item.id} value={item.id}>
+                  [{item.market === 'krx' ? '국내' : '미국'}] {item.name} ({item.ticker})
+                </option>
+              ))}
+            </select>
+            <p className="helper-text helper-text--tight">홈에서 등록한 시장과 종목 정보를 그대로 적용합니다.</p>
+          </div>
+        ) : null}
+
         <div className="toolbar-row toolbar-row--stacked">
           <div className="segmented-control segmented-control--full" role="tablist" aria-label="시장 선택">
             {MARKET_OPTIONS.map((item) => (

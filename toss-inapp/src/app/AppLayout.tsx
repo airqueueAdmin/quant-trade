@@ -5,20 +5,20 @@ import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { BannerAd } from '../shared/ads/BannerAd'
 import { env } from '../shared/config/env'
 
-type NavIconName = 'home' | 'market' | 'target' | 'wallet' | 'more'
+type NavIconName = 'home' | 'market' | 'ai' | 'target' | 'more'
 
 const PRIMARY_NAV_ITEMS: Array<{ to: string; label: string; icon: NavIconName }> = [
   { to: '/', label: '홈', icon: 'home' },
   { to: '/sector-flow', label: '시장', icon: 'market' },
+  { to: '/ai-analysis', label: 'AI 분석', icon: 'ai' },
   { to: '/closing-bet', label: '종가베팅', icon: 'target' },
-  { to: '/paper-trading', label: '모의투자', icon: 'wallet' },
 ]
 
 const MORE_NAV_ITEMS = [
   {
-    to: '/ai-analysis',
-    label: 'AI 분석',
-    description: '뉴스와 투자 심리를 빠르게 확인해요.',
+    to: '/paper-trading',
+    label: '모의투자',
+    description: '실제 돈 없이 매매와 계좌 관리를 연습해요.',
   },
   {
     to: '/strategy-simulation',
@@ -56,11 +56,12 @@ function NavIcon({ name }: { name: NavIconName }) {
     )
   }
 
-  if (name === 'wallet') {
+  if (name === 'ai') {
     return (
       <svg viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M4 6.7h14.2A1.8 1.8 0 0 1 20 8.5v9A1.8 1.8 0 0 1 18.2 19H5.8A1.8 1.8 0 0 1 4 17.2Z" />
-        <path d="M4.5 7 16 4.2v2.5M15.5 12.8H20" />
+        <path d="m12 3 1.2 4.1L17 9l-3.8 1.9L12 15l-1.2-4.1L7 9l3.8-1.9Z" />
+        <path d="m18.5 14 .7 2.3 2.3.7-2.3.7-.7 2.3-.7-2.3-2.3-.7 2.3-.7Z" />
+        <path d="M5 14.5V20m-2.7-2.7h5.4" />
       </svg>
     )
   }
