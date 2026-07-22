@@ -2,6 +2,7 @@ import { useState } from 'react'
 
 import { StatusCard } from '../../components/StatusCard'
 import { StepFlow } from '../../components/StepFlow'
+import { RewardedAdCard } from '../../shared/ads/RewardedAdCard'
 import { env } from '../../shared/config/env'
 import { ContactsViralCard } from '../../shared/rewards/ContactsViralCard'
 import { WatchlistCard } from './WatchlistCard'
@@ -88,6 +89,8 @@ export function HomePage() {
         </section>
 
         <>
+          <RewardedAdCard adGroupId={env.ads.rewardedAdGroupId} />
+
           <ContactsViralCard moduleId={env.rewards.contactsViralModuleId} />
 
           <details className="disclosure-panel">

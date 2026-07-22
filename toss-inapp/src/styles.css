@@ -744,6 +744,40 @@ select {
   }
 }
 
+.rewarded-ad-card {
+  background:
+    radial-gradient(circle at top right, rgba(255, 170, 51, 0.22), transparent 42%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(255, 248, 235, 0.94) 100%);
+}
+
+.rewarded-ad-card__action {
+  width: 100%;
+  margin-top: 18px;
+}
+
+.rewarded-ad-card__feedback {
+  margin: 12px 0 0;
+  padding: 12px 14px;
+  border-radius: 14px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.rewarded-ad-card__feedback--neutral {
+  background: #f2f4f6;
+  color: #4e5968;
+}
+
+.rewarded-ad-card__feedback--positive {
+  background: #e8fff3;
+  color: #087443;
+}
+
+.rewarded-ad-card__feedback--error {
+  background: #fff1f3;
+  color: #b42318;
+}
+
 .viral-reward-card {
   background:
     radial-gradient(circle at top right, rgba(49, 130, 246, 0.2), transparent 42%),

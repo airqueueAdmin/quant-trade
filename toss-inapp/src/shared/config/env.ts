@@ -1,9 +1,14 @@
 const fallbackBackendUrl = 'http://127.0.0.1:8000'
 const testInterstitialAdGroupId = 'ait-ad-test-interstitial-id'
+const testRewardedAdGroupId = 'ait-ad-test-rewarded-id'
 const testBannerAdGroupId = 'ait-ad-test-banner-id'
 
 const configuredInterstitialAdGroupId = (
   import.meta.env.VITE_INTERSTITIAL_AD_GROUP_ID || ''
+).trim()
+
+const configuredRewardedAdGroupId = (
+  import.meta.env.VITE_REWARDED_AD_GROUP_ID || ''
 ).trim()
 
 const configuredBannerAdGroupId = (
@@ -21,6 +26,9 @@ export const env = {
     interstitialAdGroupId: import.meta.env.DEV
       ? testInterstitialAdGroupId
       : configuredInterstitialAdGroupId,
+    rewardedAdGroupId: import.meta.env.DEV
+      ? testRewardedAdGroupId
+      : configuredRewardedAdGroupId,
     bannerAdGroupId: import.meta.env.DEV
       ? testBannerAdGroupId
       : configuredBannerAdGroupId,
