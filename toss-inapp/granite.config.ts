@@ -15,6 +15,9 @@ export default defineConfig({
       build: 'vite build',
     },
   },
+  webViewProps: {
+    type: 'game',
+  },
   permissions: [],
   outdir: 'dist',
 })

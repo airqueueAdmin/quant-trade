@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react'
-import { closeView } from '@apps-in-toss/web-bridge'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 
 import { BannerAd } from '../shared/ads/BannerAd'
@@ -84,15 +83,11 @@ function NavIcon({ name }: { name: NavIconName }) {
 export function AppLayout() {
   const location = useLocation()
   const [isMoreOpen, setIsMoreOpen] = useState(false)
-  const [isExitOpen, setIsExitOpen] = useState(false)
-  const [isClosing, setIsClosing] = useState(false)
-  const [exitError, setExitError] = useState<string | null>(null)
-  const cancelExitRef = useRef<HTMLButtonElement>(null)
   const closeMoreRef = useRef<HTMLButtonElement>(null)
   const isMoreRoute = MORE_NAV_ITEMS.some((item) => item.to === location.pathname)
 
   useEffect(() => {
-    if (!isMoreOpen && !isExitOpen) {
+    if (!isMoreOpen) {
       return
     }
 
@@ -103,21 +98,13 @@ export function AppLayout() {
         return
       }
       setIsMoreOpen(false)
-      setIsExitOpen(false)
-      setExitError(null)
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => {
       document.body.style.overflow = previousOverflow
       window.removeEventListener('keydown', handleKeyDown)
     }
-  }, [isExitOpen, isMoreOpen])
-
-  useEffect(() => {
-    if (isExitOpen) {
-      cancelExitRef.current?.focus()
-    }
-  }, [isExitOpen])
+  }, [isMoreOpen])
 
   useEffect(() => {
     if (isMoreOpen) {
@@ -125,47 +112,12 @@ export function AppLayout() {
     }
   }, [isMoreOpen])
 
-  function openExitConfirmation() {
-    setIsMoreOpen(false)
-    setExitError(null)
-    setIsExitOpen(true)
-  }
-
-  function closeExitConfirmation() {
-    if (isClosing) {
-      return
-    }
-    setIsExitOpen(false)
-    setExitError(null)
-  }
-
-  async function handleCloseApp() {
-    setIsClosing(true)
-    setExitError(null)
-    try {
-      await closeView()
-    } catch {
-      setExitError('토스 앱 안에서만 서비스를 종료할 수 있어요.')
-      setIsClosing(false)
-    }
-  }
-
   return (
     <div className="app-shell">
       <div className="app-frame">
         <header className="app-header">
           <div className="app-header__topline">
             <p className="app-header__eyebrow">한눈투자</p>
-            <button
-              type="button"
-              className="app-header__close"
-              aria-label="서비스 종료"
-              onClick={openExitConfirmation}
-            >
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="m6 6 12 12M18 6 6 18" />
-              </svg>
-            </button>
           </div>
         </header>
 
@@ -245,30 +197,6 @@ export function AppLayout() {
         </div>
       ) : null}
 
-      {isExitOpen ? (
-        <div className="app-overlay app-overlay--center" role="presentation" onMouseDown={closeExitConfirmation}>
-          <section
-            className="app-exit-dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="app-exit-dialog-title"
-            aria-describedby="app-exit-dialog-description"
-            onMouseDown={(event) => event.stopPropagation()}
-          >
-            <h2 id="app-exit-dialog-title">종료하시겠습니까?</h2>
-            <p id="app-exit-dialog-description">한눈투자를 종료하고 토스로 돌아갑니다.</p>
-            {exitError ? <p className="app-exit-dialog__error">{exitError}</p> : null}
-            <div className="app-exit-dialog__actions">
-              <button ref={cancelExitRef} type="button" className="secondary-action" onClick={closeExitConfirmation}>
-                취소
-              </button>
-              <button type="button" className="primary-action" onClick={() => void handleCloseApp()} disabled={isClosing}>
-                {isClosing ? '종료 중...' : '종료'}
-              </button>
-            </div>
-          </section>
-        </div>
-      ) : null}
     </div>
   )
 }

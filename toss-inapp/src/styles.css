@@ -82,7 +82,6 @@ select {
   color: #6b7684;
 }
 
-.app-header__close,
 .app-dialog__icon-button {
   display: inline-flex;
   width: 36px;
@@ -97,7 +96,6 @@ select {
   color: #4e5968;
 }
 
-.app-header__close svg,
 .app-dialog__icon-button svg {
   width: 21px;
   height: 21px;
@@ -222,12 +220,7 @@ select {
   animation: app-overlay-enter 160ms ease-out;
 }
 
-.app-overlay--center {
-  align-items: center;
-}
-
-.app-menu-sheet,
-.app-exit-dialog {
+.app-menu-sheet {
   width: min(100%, 448px);
   background: #ffffff;
   box-shadow: 0 24px 70px rgba(15, 23, 42, 0.22);
@@ -297,41 +290,6 @@ select {
   color: #8b95a1;
   font-size: 25px;
   font-weight: 400;
-}
-
-.app-exit-dialog {
-  padding: 26px 22px 20px;
-  border-radius: 26px;
-}
-
-.app-exit-dialog h2 {
-  margin: 0;
-  font-size: 23px;
-  line-height: 1.3;
-  letter-spacing: -0.02em;
-}
-
-.app-exit-dialog > p {
-  margin: 10px 0 0;
-  color: #6b7684;
-  font-size: 15px;
-  line-height: 1.5;
-}
-
-.app-exit-dialog .app-exit-dialog__error {
-  margin-top: 12px;
-  padding: 12px 14px;
-  border-radius: 14px;
-  background: #fff1f3;
-  color: #b42318;
-  font-size: 13px;
-}
-
-.app-exit-dialog__actions {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-  margin-top: 22px;
 }
 
 @keyframes app-overlay-enter {
