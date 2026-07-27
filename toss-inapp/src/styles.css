@@ -863,6 +863,229 @@ select {
   color: #b54708;
 }
 
+.daily-routine {
+  position: relative;
+  overflow: hidden;
+  padding: 24px 20px 20px;
+  border-radius: 28px;
+  background:
+    radial-gradient(circle at 100% 0%, rgba(91, 141, 239, 0.34), transparent 37%),
+    linear-gradient(145deg, #17213a 0%, #243968 100%);
+  color: #ffffff;
+  box-shadow: 0 18px 42px rgba(33, 62, 117, 0.2);
+}
+
+.daily-routine__topline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.daily-routine__topline p {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.68);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.daily-routine__topline > span {
+  flex: 0 0 auto;
+  padding: 6px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.daily-routine__topline > span b {
+  color: #8eb8ff;
+}
+
+.daily-routine h1 {
+  max-width: 310px;
+  margin: 16px 0 0;
+  font-size: 26px;
+  line-height: 1.25;
+  letter-spacing: -0.03em;
+  word-break: keep-all;
+}
+
+.daily-routine__description {
+  max-width: 330px;
+  margin: 9px 0 0;
+  color: rgba(255, 255, 255, 0.68);
+  font-size: 13px;
+  line-height: 1.55;
+  word-break: keep-all;
+}
+
+.daily-routine__progress {
+  height: 7px;
+  margin-top: 22px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.daily-routine__progress span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #6ea4ff 0%, #9cc0ff 100%);
+  transition: width 220ms ease;
+}
+
+.daily-routine__progress-label {
+  margin: 7px 0 0;
+  color: rgba(255, 255, 255, 0.62);
+  font-size: 11px;
+  text-align: right;
+}
+
+.daily-routine__tasks {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.daily-routine__task {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 60px;
+  padding: 11px 13px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 17px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #ffffff;
+  text-decoration: none;
+  transition: background 160ms ease, border-color 160ms ease;
+}
+
+.daily-routine__task:active {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.daily-routine__task--completed {
+  border-color: rgba(139, 196, 161, 0.18);
+  background: rgba(63, 145, 96, 0.15);
+}
+
+.daily-routine__task-state {
+  display: inline-flex;
+  width: 29px;
+  height: 29px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.12);
+  color: #b9d2ff;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.daily-routine__task--completed .daily-routine__task-state {
+  background: #3f9160;
+  color: #ffffff;
+}
+
+.daily-routine__task-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.daily-routine__task-copy strong {
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.daily-routine__task-copy small {
+  overflow: hidden;
+  color: rgba(255, 255, 255, 0.58);
+  font-size: 11px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.daily-routine__task > b {
+  color: rgba(255, 255, 255, 0.38);
+  font-size: 22px;
+  font-weight: 400;
+}
+
+.daily-routine__primary-action {
+  display: flex;
+  min-height: 52px;
+  align-items: center;
+  justify-content: center;
+  margin-top: 14px;
+  padding: 13px 16px;
+  border-radius: 16px;
+  background: #ffffff;
+  color: #1b64da;
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.daily-routine__primary-action--complete {
+  color: #287a49;
+}
+
+.daily-routine__week {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 4px;
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.09);
+}
+
+.daily-routine__day {
+  display: grid;
+  justify-items: center;
+  gap: 7px;
+  min-width: 0;
+  color: rgba(255, 255, 255, 0.48);
+  font-size: 10px;
+}
+
+.daily-routine__day--today {
+  color: #ffffff;
+  font-weight: 800;
+}
+
+.daily-routine__day-dot {
+  display: inline-flex;
+  width: 22px;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+  font-size: 10px;
+}
+
+.daily-routine__day-dot--active {
+  background: #3f9160;
+}
+
+.daily-routine__streak-note {
+  margin: 10px 0 0;
+  color: rgba(255, 255, 255, 0.48);
+  font-size: 10px;
+  line-height: 1.45;
+  text-align: center;
+}
+
 .home-watchlist__header {
   display: flex;
   align-items: flex-start;

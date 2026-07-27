@@ -5,6 +5,7 @@ import { StepFlow } from '../../components/StepFlow'
 import { RewardedAdCard } from '../../shared/ads/RewardedAdCard'
 import { env } from '../../shared/config/env'
 import { ContactsViralCard } from '../../shared/rewards/ContactsViralCard'
+import { DailyRoutineCard } from './DailyRoutineCard'
 import { WatchlistCard } from './WatchlistCard'
 
 const HOME_STEPS = [
@@ -30,6 +31,8 @@ export function HomePage() {
 
   return (
     <main className="page-shell">
+      <DailyRoutineCard />
+
       <WatchlistCard />
 
       <StepFlow

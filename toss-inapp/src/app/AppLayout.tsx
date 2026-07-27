@@ -3,6 +3,7 @@ import { NavLink, Outlet, useLocation } from 'react-router-dom'
 
 import { BannerAd } from '../shared/ads/BannerAd'
 import { env } from '../shared/config/env'
+import { recordDailyRoutineVisit } from '../shared/retention/dailyRoutine'
 
 type NavIconName = 'home' | 'market' | 'ai' | 'target' | 'more'
 
@@ -85,6 +86,10 @@ export function AppLayout() {
   const [isMoreOpen, setIsMoreOpen] = useState(false)
   const closeMoreRef = useRef<HTMLButtonElement>(null)
   const isMoreRoute = MORE_NAV_ITEMS.some((item) => item.to === location.pathname)
+
+  useEffect(() => {
+    recordDailyRoutineVisit(location.pathname)
+  }, [location.pathname])
 
   useEffect(() => {
     if (!isMoreOpen) {
