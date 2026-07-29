@@ -79,15 +79,20 @@ function renderComponentNames(sector: SectorRow) {
 }
 
 export function SectorFlowPage() {
-  const [market, setMarket] = useState<Market>('us')
+  const [market, setMarket] = useState<Market | null>(null)
   const [metric, setMetric] = useState<MetricKey>('return_21d_pct')
   const [snapshot, setSnapshot] = useState<SectorSnapshot | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(false)
   const [refreshToken, setRefreshToken] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [currentStep, setCurrentStep] = useState(0)
 
   useEffect(() => {
+    if (!market) {
+      return
+    }
+
+    const selectedMarket = market
     const abortController = new AbortController()
 
     async function loadSnapshot() {
@@ -95,7 +100,7 @@ export function SectorFlowPage() {
       setError(null)
 
       try {
-        const result = await apiClient.marketSectors(market, abortController.signal)
+        const result = await apiClient.marketSectors(selectedMarket, abortController.signal)
         setSnapshot(result)
       } catch (caughtError) {
         if (abortController.signal.aborted) {
@@ -123,6 +128,16 @@ export function SectorFlowPage() {
   const sectors = snapshot?.sectors ?? []
   const sortedSectors = sortSectors(sectors, metric)
 
+  function handleMarketSelect(nextMarket: Market) {
+    if (nextMarket === market) {
+      return
+    }
+
+    setSnapshot(null)
+    setError(null)
+    setMarket(nextMarket)
+  }
+
   return (
     <main className="page-shell">
       <StepFlow
@@ -130,7 +145,7 @@ export function SectorFlowPage() {
         steps={SECTOR_STEPS}
         currentStep={currentStep}
         onStepChange={setCurrentStep}
-        nextDisabled={currentStep === 0 && (loading || Boolean(error) || !snapshot)}
+        nextDisabled={currentStep === 0 && (!market || loading || Boolean(error) || !snapshot)}
       >
         <section className="content-panel">
           <div className="toolbar-row">
@@ -144,7 +159,7 @@ export function SectorFlowPage() {
                       ? 'segmented-control__button segmented-control__button--active'
                       : 'segmented-control__button'
                   }
-                  onClick={() => setMarket(item.value)}
+                  onClick={() => handleMarketSelect(item.value)}
                 >
                   {item.label}
                 </button>
@@ -155,12 +170,17 @@ export function SectorFlowPage() {
               type="button"
               className="secondary-action"
               onClick={() => setRefreshToken((value) => value + 1)}
+              disabled={!market || loading}
             >
               새로고침
             </button>
           </div>
 
-          <p className="helper-text">미국은 섹터 ETF, 국내는 대표 종목 기준입니다.</p>
+          <p className="helper-text">
+            {market
+              ? '미국은 섹터 ETF, 국내는 대표 종목 기준입니다.'
+              : '국내주식 또는 미국주식을 선택하면 시장 분석을 시작합니다.'}
+          </p>
           {loading ? <div className="state-box">섹터 흐름을 불러오는 중입니다...</div> : null}
           {!loading && error ? <div className="state-box state-box--error">{error}</div> : null}
           {!loading && !error && snapshot ? (

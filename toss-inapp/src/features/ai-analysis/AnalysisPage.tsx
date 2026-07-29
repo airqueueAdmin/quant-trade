@@ -104,7 +104,7 @@ function formatNewsDate(value?: string) {
 }
 
 export function AnalysisPage() {
-  const analysisAd = useFullScreenAd(env.ads.interstitialAdGroupId)
+  const analysisAd = useFullScreenAd(env.ads.rewardedAdGroupId)
   const { items: watchlist } = useWatchlist()
   const [market, setMarket] = useState<Market>('us')
   const [krxExchange, setKrxExchange] = useState<KrxExchange>('auto')
@@ -205,13 +205,13 @@ export function AnalysisPage() {
       return
     }
 
+    analysisAd.showAd()
     setAnalysisLoading(true)
     setAnalysisError(null)
 
     try {
       const response = await apiClient.sentiment(normalizedTicker, market, krxExchange)
       setResult(response)
-      analysisAd.showAd()
       setCurrentStep(2)
     } catch (caughtError) {
       if (caughtError instanceof ApiError) {
@@ -389,7 +389,7 @@ export function AnalysisPage() {
             </button>
             {analysisAd.enabled ? (
               <p className="helper-text helper-text--tight">
-                분석이 끝나면 결과 확인 전에 전면 광고가 표시될 수 있습니다.
+                AI 분석 실행 시 리워드 광고가 표시될 수 있습니다.
               </p>
             ) : null}
           </div>

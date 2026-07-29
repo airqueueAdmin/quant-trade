@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { appLogin, getAnonymousKey, requestNotificationAgreement } from '@apps-in-toss/web-bridge'
 
 import { StepFlow } from '../../components/StepFlow'
+import { useFullScreenAd } from '../../shared/ads/useFullScreenAd'
 import { apiClient } from '../../shared/api/client'
 import { ApiError } from '../../shared/api/http'
 import type {
@@ -17,6 +18,7 @@ import type {
   StockHistoryRow,
   SentimentResult,
 } from '../../shared/api/types'
+import { env } from '../../shared/config/env'
 import { clearStoredSession, readStoredSession, writeStoredSession, type AppSession } from '../../shared/session/appSession'
 import { useWatchlist } from '../../shared/watchlist/useWatchlist'
 
@@ -506,6 +508,7 @@ function recentStockWindow() {
 }
 
 export function ClosingBetPage() {
+  const analysisAd = useFullScreenAd(env.ads.rewardedAdGroupId)
   const { items: watchlist } = useWatchlist()
   const [session, setSession] = useState<AppSession | null>(() => readStoredSession())
   const [market, setMarket] = useState<MarketOption>('krx')
@@ -813,6 +816,7 @@ export function ClosingBetPage() {
       return
     }
 
+    analysisAd.showAd()
     setLoading(true)
     setError(null)
     resetAnalysis()
@@ -1158,6 +1162,11 @@ export function ClosingBetPage() {
           >
             {loading ? '보조 데이터 불러오는 중...' : 'AI + 섹터 기반으로 자동 판정'}
           </button>
+          {analysisAd.enabled ? (
+            <p className="helper-text helper-text--tight">
+              AI 자동 판정 실행 시 리워드 광고가 표시될 수 있습니다.
+            </p>
+          ) : null}
         </div>
 
         {error ? <div className="state-box state-box--error">{error}</div> : null}
