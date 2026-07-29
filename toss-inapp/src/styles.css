@@ -2006,6 +2006,112 @@ select {
   margin-top: 12px;
 }
 
+.chart-section {
+  margin-top: 20px;
+  padding: 18px 14px 12px;
+  border-radius: 22px;
+  background: #f7f9fb;
+  border: 1px solid rgba(25, 31, 40, 0.06);
+}
+
+.chart-section__header {
+  padding: 0 4px;
+}
+
+.chart-section__header h4 {
+  margin: 0;
+  color: #191f28;
+  font-size: 17px;
+  line-height: 1.35;
+}
+
+.chart-shell {
+  width: 100%;
+  min-width: 0;
+}
+
+.chart-shell--gauge {
+  max-width: 320px;
+  margin: 10px auto 0;
+}
+
+.chart-shell--bars {
+  margin-top: 18px;
+  padding: 12px 8px 6px;
+  border-radius: 20px;
+  background: #f7f9fb;
+}
+
+.chart-shell--line {
+  margin-top: 10px;
+}
+
+.chart-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.chart-axis__label {
+  fill: #8b95a1;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.chart-gauge__value {
+  fill: #191f28;
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+}
+
+.chart-gauge__label {
+  fill: #6b7684;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.chart-grid__line {
+  stroke: #e5e8eb;
+  stroke-width: 1;
+}
+
+.chart-grid__zero {
+  stroke: #b0b8c1;
+  stroke-width: 1.2;
+}
+
+.chart-bar {
+  transition: opacity 160ms ease;
+}
+
+.chart-bar--positive {
+  fill: #3182f6;
+}
+
+.chart-bar--negative {
+  fill: #f04452;
+}
+
+.chart-bar__label {
+  fill: #333d4b;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.chart-bar__value {
+  fill: #4e5968;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.chart-legend__label {
+  fill: #4e5968;
+  font-size: 10px;
+  font-weight: 700;
+}
+
 .sentiment-card {
   margin-top: 18px;
   padding: 20px;

@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 
+import { GaugeChart } from '../../components/Charts'
 import { StepFlow } from '../../components/StepFlow'
 import { apiClient } from '../../shared/api/client'
 import { ApiError } from '../../shared/api/http'
@@ -407,17 +408,8 @@ export function AnalysisPage() {
                       {result.company_name ? `${result.company_name} (${result.resolved_ticker})` : result.resolved_ticker}
                     </h3>
                   </div>
-                  <div className="sentiment-score-box">
-                    <span className="sentiment-score-box__label">감성 점수</span>
-                    <strong className="sentiment-score-box__value">{result.sentiment_score}</strong>
-                  </div>
                 </div>
-                <div className="sentiment-meter" aria-hidden="true">
-                  <div
-                    className="sentiment-meter__fill"
-                    style={{ width: `${Math.max(0, Math.min(100, result.sentiment_score))}%` }}
-                  />
-                </div>
+                <GaugeChart value={result.sentiment_score} label="감성 점수" />
                 <p className="sentiment-card__summary-label">{scoreLabel(result.sentiment_score)}</p>
                 <p className="sentiment-card__summary-text">{result.summary}</p>
                 {!result.news_api_enabled ? <div className="state-box">현재 일부 최신 뉴스만 반영됩니다.</div> : null}

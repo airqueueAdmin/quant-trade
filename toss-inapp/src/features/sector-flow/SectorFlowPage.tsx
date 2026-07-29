@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 
+import { HorizontalBarChart } from '../../components/Charts'
 import { StepFlow } from '../../components/StepFlow'
 import { apiClient } from '../../shared/api/client'
 import { ApiError } from '../../shared/api/http'
@@ -50,6 +51,13 @@ function formatMetricValue(sector: SectorRow, metric: MetricKey) {
     return `${sector.trend_score >= 0 ? '+' : ''}${sector.trend_score.toFixed(1)}`
   }
   return formatPct(sector[metric])
+}
+
+function metricValue(sector: SectorRow, metric: MetricKey) {
+  if (metric === 'trend_score') {
+    return sector.trend_score
+  }
+  return Number(sector[metric] ?? 0)
 }
 
 function formatAsOf(value?: string) {
@@ -255,25 +263,37 @@ export function SectorFlowPage() {
                 ))}
               </div>
 
-              <div className="sector-list">
-                {sortedSectors.map((sector) => (
-                  <article key={sector.key} className="sector-list__item">
-                    <div className="sector-list__top">
-                      <div>
-                        <h4 className="sector-list__title">{sector.name}</h4>
-                        <p className="sector-list__subtitle">{sector.trend_label}</p>
+              <HorizontalBarChart
+                ariaLabel={`${snapshot.market_name} 섹터별 ${METRIC_OPTIONS.find((item) => item.key === metric)?.label ?? ''} 비교 차트`}
+                data={sortedSectors.map((sector) => ({
+                  label: sector.name,
+                  value: metricValue(sector, metric),
+                  formattedValue: formatMetricValue(sector, metric),
+                }))}
+              />
+
+              <details className="disclosure-panel">
+                <summary>섹터별 상세 정보 보기</summary>
+                <div className="sector-list">
+                  {sortedSectors.map((sector) => (
+                    <article key={sector.key} className="sector-list__item">
+                      <div className="sector-list__top">
+                        <div>
+                          <h4 className="sector-list__title">{sector.name}</h4>
+                          <p className="sector-list__subtitle">{sector.trend_label}</p>
+                        </div>
+                        <strong className="sector-list__value">{formatMetricValue(sector, metric)}</strong>
                       </div>
-                      <strong className="sector-list__value">{formatMetricValue(sector, metric)}</strong>
-                    </div>
-                    <p className="sector-list__meta">
-                      기준: {sector.proxy_label} / 구성: {renderComponentNames(sector)}
-                    </p>
-                    <p className="sector-list__meta">
-                      20일선 {trendPositionLabel(sector.above_20dma)} / 60일선 {trendPositionLabel(sector.above_60dma)}
-                    </p>
-                  </article>
-                ))}
-              </div>
+                      <p className="sector-list__meta">
+                        기준: {sector.proxy_label} / 구성: {renderComponentNames(sector)}
+                      </p>
+                      <p className="sector-list__meta">
+                        20일선 {trendPositionLabel(sector.above_20dma)} / 60일선 {trendPositionLabel(sector.above_60dma)}
+                      </p>
+                    </article>
+                  ))}
+                </div>
+              </details>
 
               <div className="content-panel content-panel--nested">
                 <p className="content-panel__eyebrow">해석 기준</p>

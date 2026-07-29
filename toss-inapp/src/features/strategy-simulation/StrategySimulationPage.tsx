@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 
+import { LineChart } from '../../components/Charts'
 import { StepFlow } from '../../components/StepFlow'
 import { apiClient } from '../../shared/api/client'
 import { ApiError } from '../../shared/api/http'
@@ -168,6 +169,14 @@ function formatMoney(value: number | undefined, market: Market) {
     return `${Math.round(value).toLocaleString('ko-KR')}원`
   }
   return `$${Math.round(value).toLocaleString('en-US')}`
+}
+
+function formatCompactMoney(value: number, market: Market) {
+  const formatted = new Intl.NumberFormat('ko-KR', {
+    notation: 'compact',
+    maximumFractionDigits: 1,
+  }).format(Math.round(value))
+  return market === 'krx' ? `${formatted}원` : `$${formatted}`
 }
 
 function formatDateTime(value?: string) {
@@ -1225,6 +1234,35 @@ export function StrategySimulationPage() {
                   {formatMoney(metrics.final_total_value, backtestResult.market)}
                 </strong>
               </article>
+            </div>
+
+            <div className="chart-section">
+              <div className="chart-section__header">
+                <p className="content-panel__eyebrow">자산 변화</p>
+                <h4>전략과 단순 보유 비교</h4>
+              </div>
+              <LineChart
+                ariaLabel={`${backtestResult.resolved_ticker} 전략과 단순 보유 자산 변화 비교 차트`}
+                formatValue={(value) => formatCompactMoney(value, backtestResult.market)}
+                series={[
+                  {
+                    label: '전략',
+                    color: '#3182f6',
+                    points: backtestResult.portfolio_history.map((point) => ({
+                      date: point.Date,
+                      value: point.total_value,
+                    })),
+                  },
+                  {
+                    label: '단순 보유',
+                    color: '#8b95a1',
+                    points: backtestResult.benchmark_history.map((point) => ({
+                      date: point.Date,
+                      value: point.total_value,
+                    })),
+                  },
+                ]}
+              />
             </div>
 
             <div className="simulation-compare-grid">

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { appLogin, getAnonymousKey, requestNotificationAgreement } from '@apps-in-toss/web-bridge'
 
+import { GaugeChart } from '../../components/Charts'
 import { StepFlow } from '../../components/StepFlow'
 import { useFullScreenAd } from '../../shared/ads/useFullScreenAd'
 import { apiClient } from '../../shared/api/client'
@@ -1181,15 +1182,18 @@ export function ClosingBetPage() {
               <p className="sentiment-card__eyebrow">종가베팅 점수</p>
               <h3 className="sentiment-card__title">{tickerLabel}</h3>
             </div>
-            <div className="sentiment-score-box">
-              <span className="sentiment-score-box__label">총점</span>
-              <strong className="sentiment-score-box__value">{totalScore}</strong>
-            </div>
           </div>
 
-          <div className="sentiment-meter" aria-hidden="true">
-            <div className="sentiment-meter__fill" style={{ width: `${totalScore}%` }} />
-          </div>
+          <GaugeChart
+            value={totalScore}
+            label="종가베팅 점수"
+            bands={[
+              { to: 45, color: '#f04452' },
+              { to: 60, color: '#f59f00' },
+              { to: 76, color: '#3182f6' },
+              { to: 100, color: '#20a66a' },
+            ]}
+          />
 
           <p className="sentiment-card__summary-label">
             {hasAnalysis ? scoreLabel(totalScore) : '자동 판정 전'}
