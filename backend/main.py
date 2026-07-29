@@ -191,6 +191,10 @@ MARKET_CLOSE_TIMES = {
     "krx": time(hour=15, minute=30),
     "us": time(hour=16, minute=0),
 }
+CLOSING_BET_START_TIMES = {
+    "krx": time(hour=15, minute=20),
+    "us": time(hour=15, minute=50),
+}
 CLOSING_BET_QUICK_SCENARIOS = [
     "섹터가 하루 종일 강했고 종가까지 눌림이 적음",
     "장중 눌림 뒤 거래대금이 다시 붙으며 종가 회복",
@@ -2180,11 +2184,58 @@ def test_closing_bet_notification(request: ClosingBetNotificationTestRequest) ->
     return {"sent": True, "channel": request.channel, "destination": request.destination}
 
 
+def closing_bet_notification_window(
+    market: str,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    normalized_market = normalize_market(market)
+    timezone = MARKET_TIMEZONES[normalized_market]
+    if now is not None and now.tzinfo is None:
+        raise ValueError("now must include timezone information")
+
+    market_now = now.astimezone(timezone) if now else datetime.now(timezone)
+    market_date = market_now.date()
+    window_start = datetime.combine(
+        market_date,
+        CLOSING_BET_START_TIMES[normalized_market],
+        tzinfo=timezone,
+    )
+    window_end = datetime.combine(
+        market_date,
+        MARKET_CLOSE_TIMES[normalized_market],
+        tzinfo=timezone,
+    )
+
+    if market_date.weekday() >= 5:
+        reason = "market_weekend"
+        allowed = False
+    elif market_now < window_start:
+        reason = "before_closing_bet_window"
+        allowed = False
+    elif market_now >= window_end:
+        reason = "after_closing_bet_window"
+        allowed = False
+    else:
+        reason = "inside_closing_bet_window"
+        allowed = True
+
+    return {
+        "allowed": allowed,
+        "reason": reason,
+        "market": normalized_market,
+        "market_date": market_date.isoformat(),
+        "market_time": market_now.isoformat(),
+        "window_start": window_start.isoformat(),
+        "window_end": window_end.isoformat(),
+    }
+
+
 def dispatch_closing_bet_notifications(
     market: str | None = None,
     limit: int = 100,
     notification_id: int | None = None,
     force: bool = False,
+    now: datetime | None = None,
 ) -> dict[str, Any]:
     filters = {
         "active": "eq.true",
@@ -2209,42 +2260,63 @@ def dispatch_closing_bet_notifications(
 
     for item in subscriptions:
         try:
-            evaluation = evaluate_closing_bet(item["ticker"], item["market"], item.get("krx_exchange", "auto"))
+            item_market = normalize_market(item["market"])
+            initial_window = closing_bet_notification_window(item_market, now)
+            if not initial_window["allowed"]:
+                skipped.append({
+                    "id": item["id"],
+                    "reason": "outside_closing_bet_window",
+                    "window_reason": initial_window["reason"],
+                    "market_time": initial_window["market_time"],
+                    "window_start": initial_window["window_start"],
+                    "window_end": initial_window["window_end"],
+                })
+                continue
+
+            evaluation = evaluate_closing_bet(item["ticker"], item_market, item.get("krx_exchange", "auto"))
             score = int(evaluation.get("total_score") or 0)
             signal_date = str(evaluation.get("signal_date") or "")
             threshold_score = int(item.get("threshold_score")) if item.get("threshold_score") is not None else 0
-            if force:
-                subject, message = format_closing_bet_notification_message(evaluation, threshold_score)
-                send_closing_bet_notification(
-                    item["channel"],
-                    item["destination"],
-                    subject,
-                    message,
-                    evaluation,
-                    account_id=item["account_id"],
-                    notification_id=item["id"],
-                    toss_user_key=item.get("toss_user_key"),
-                )
-                dispatched.append({"id": item["id"], "score": score, "signal_date": signal_date, "forced": True})
-                item["last_notified_at"] = datetime.utcnow().isoformat()
-            elif score < threshold_score:
+            if signal_date != initial_window["market_date"]:
+                skipped.append({
+                    "id": item["id"],
+                    "reason": "stale_signal_date",
+                    "signal_date": signal_date,
+                    "market_date": initial_window["market_date"],
+                    "score": score,
+                })
+            elif not force and score < threshold_score:
                 skipped.append({"id": item["id"], "reason": "threshold_not_met", "score": score})
-            elif item.get("last_signal_date") == signal_date and item.get("last_notified_at"):
+            elif not force and item.get("last_signal_date") == signal_date and item.get("last_notified_at"):
                 skipped.append({"id": item["id"], "reason": "already_notified_for_signal_date", "score": score})
             else:
-                subject, message = format_closing_bet_notification_message(evaluation, threshold_score)
-                send_closing_bet_notification(
-                    item["channel"],
-                    item["destination"],
-                    subject,
-                    message,
-                    evaluation,
-                    account_id=item["account_id"],
-                    notification_id=item["id"],
-                    toss_user_key=item.get("toss_user_key"),
-                )
-                dispatched.append({"id": item["id"], "score": score, "signal_date": signal_date})
-                item["last_notified_at"] = datetime.utcnow().isoformat()
+                send_window = closing_bet_notification_window(item_market, now)
+                if not send_window["allowed"]:
+                    skipped.append({
+                        "id": item["id"],
+                        "reason": "outside_closing_bet_window",
+                        "window_reason": send_window["reason"],
+                        "market_time": send_window["market_time"],
+                        "window_start": send_window["window_start"],
+                        "window_end": send_window["window_end"],
+                    })
+                else:
+                    subject, message = format_closing_bet_notification_message(evaluation, threshold_score)
+                    send_closing_bet_notification(
+                        item["channel"],
+                        item["destination"],
+                        subject,
+                        message,
+                        evaluation,
+                        account_id=item["account_id"],
+                        notification_id=item["id"],
+                        toss_user_key=item.get("toss_user_key"),
+                    )
+                    dispatched_item = {"id": item["id"], "score": score, "signal_date": signal_date}
+                    if force:
+                        dispatched_item["forced"] = True
+                    dispatched.append(dispatched_item)
+                    item["last_notified_at"] = datetime.utcnow().isoformat()
 
             call_supabase(
                 "PATCH",

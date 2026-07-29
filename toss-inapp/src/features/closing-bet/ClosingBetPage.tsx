@@ -1238,7 +1238,12 @@ export function ClosingBetPage() {
         <div className="content-panel content-panel--nested">
           <p className="content-panel__eyebrow">알림 설정</p>
           <p className="content-panel__description">
-            설정 점수 이상이면 알림을 보냅니다.
+            설정 점수 이상이면 종가베팅 가능 시간에만 알림을 보냅니다.
+          </p>
+          <p className="helper-text helper-text--tight">
+            {market === 'krx'
+              ? '국내주식 알림 시간은 거래일 KST 15:20~15:30입니다.'
+              : '미국주식 알림 시간은 뉴욕 현지 거래일 15:50~16:00이며, KST는 서머타임에 맞춰 자동 조정됩니다.'}
           </p>
 
           <div className="field-grid field-grid--single-when-narrow">
