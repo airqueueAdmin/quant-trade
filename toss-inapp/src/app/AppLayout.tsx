@@ -5,16 +5,26 @@ import { BannerAd } from '../shared/ads/BannerAd'
 import { env } from '../shared/config/env'
 import { recordDailyRoutineVisit } from '../shared/retention/dailyRoutine'
 
-type NavIconName = 'home' | 'market' | 'ai' | 'target' | 'more'
+type NavIconName = 'home' | 'market' | 'ai' | 'event' | 'more'
 
-const PRIMARY_NAV_ITEMS: Array<{ to: string; label: string; icon: NavIconName }> = [
+const PRIMARY_NAV_ITEMS: Array<{
+  to: string
+  label: string
+  icon: NavIconName
+  event?: boolean
+}> = [
   { to: '/', label: '홈', icon: 'home' },
   { to: '/sector-flow', label: '시장', icon: 'market' },
   { to: '/ai-analysis', label: 'AI 분석', icon: 'ai' },
-  { to: '/closing-bet', label: '종가베팅', icon: 'target' },
+  { to: '/events/sk-hynix', label: 'SK 이벤트', icon: 'event', event: true },
 ]
 
 const MORE_NAV_ITEMS = [
+  {
+    to: '/closing-bet',
+    label: '종가베팅',
+    description: '수급 지속 가능성과 제외 신호로 후보를 추려요.',
+  },
   {
     to: '/paper-trading',
     label: '모의투자',
@@ -46,12 +56,10 @@ function NavIcon({ name }: { name: NavIconName }) {
     )
   }
 
-  if (name === 'target') {
+  if (name === 'event') {
     return (
       <svg viewBox="0 0 24 24" aria-hidden="true">
-        <circle cx="12" cy="12" r="8.2" />
-        <circle cx="12" cy="12" r="3.2" />
-        <path d="M18.2 5.8 21 3m0 0v4m0-4h-4" />
+        <path d="M12.2 3.2 9.3 9H5.8l4.1 3.2-1.6 7.1 8-8.5h-4.1l3.1-7.6Z" />
       </svg>
     )
   }
@@ -138,7 +146,13 @@ export function AppLayout() {
               key={item.to}
               to={item.to}
               className={({ isActive }) =>
-                isActive ? 'app-nav__link app-nav__link--active' : 'app-nav__link'
+                [
+                  'app-nav__link',
+                  item.event ? 'app-nav__link--event' : '',
+                  isActive ? 'app-nav__link--active' : '',
+                ]
+                  .filter(Boolean)
+                  .join(' ')
               }
               end={item.to === '/'}
               onClick={() => setIsMoreOpen(false)}

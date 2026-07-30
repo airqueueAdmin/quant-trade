@@ -68,6 +68,8 @@ export type QuoteSnapshot = {
   previous_close: number
   change_amount: number
   change_pct: number
+  market_status?: string | null
+  source?: 'naver_finance_realtime' | 'yfinance_daily' | string
 }
 
 export type StockHistoryRow = {
@@ -84,6 +86,9 @@ export type SentimentArticle = {
   url: string
   published_at?: string
   source?: string
+  source_name?: string
+  sentiment?: 'positive' | 'negative' | 'neutral'
+  sentiment_reason?: string
 }
 
 export type SentimentResult = {
@@ -94,8 +99,11 @@ export type SentimentResult = {
   company_name?: string | null
   sentiment_score: number
   summary: string
+  investment_implications?: string
   articles: SentimentArticle[]
   attempted_queries?: unknown[]
+  period_days?: number
+  today_only?: boolean
   news_api_enabled?: boolean
 }
 

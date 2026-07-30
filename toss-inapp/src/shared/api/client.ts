@@ -133,6 +133,24 @@ export const apiClient = {
     })
   },
 
+  todaySentiment(
+    ticker: string,
+    market: Market,
+    krxExchange: KrxExchange = 'auto',
+    signal?: AbortSignal,
+  ) {
+    return apiRequest<SentimentResult>(`/sentiment/${encodeURIComponent(ticker)}`, {
+      params: {
+        market,
+        krx_exchange: krxExchange,
+        period_days: 1,
+        source_filter: 'exclude_press_release',
+        today_only: true,
+      },
+      signal,
+    })
+  },
+
   paperTradingState(sessionToken: string, signal?: AbortSignal) {
     return apiRequest<PaperTradingState>('/paper-trading/state', {
       headers: { 'X-App-Session': sessionToken },

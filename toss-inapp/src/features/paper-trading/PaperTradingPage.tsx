@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { getAnonymousKey } from '@apps-in-toss/web-bridge'
+import { useSearchParams } from 'react-router-dom'
 
 import { apiClient } from '../../shared/api/client'
 import { ApiError } from '../../shared/api/http'
@@ -98,8 +99,13 @@ function formatTradeTime(value?: string | null) {
 }
 
 export function PaperTradingPage() {
+  const [searchParams] = useSearchParams()
+  const requestedTicker = searchParams.get('ticker')?.trim()
+  const initialCompany =
+    COMMON_KRX_COMPANIES.find((company) => company.ticker === requestedTicker) ??
+    COMMON_KRX_COMPANIES[0]
   const [session, setSession] = useState<AppSession | null>(() => readStoredSession())
-  const [selectedCompany, setSelectedCompany] = useState<KRXSearchResult>(COMMON_KRX_COMPANIES[0])
+  const [selectedCompany, setSelectedCompany] = useState<KRXSearchResult>(initialCompany)
   const [paperState, setPaperState] = useState<PaperTradingState | null>(null)
   const [sessionLoading, setSessionLoading] = useState(true)
   const [identityRefreshToken, setIdentityRefreshToken] = useState(0)

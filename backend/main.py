@@ -1232,6 +1232,7 @@ def create_sentiment_snapshot(
     krx_exchange: str = "auto",
     period_days: int = 7,
     source_filter: str = "all",
+    today_only: bool = False,
 ) -> dict[str, Any]:
     normalized_ticker = normalize_ticker_input(ticker)
     normalized_market, normalized_exchange = validate_market_params(market, krx_exchange)
@@ -1243,6 +1244,7 @@ def create_sentiment_snapshot(
         market=profile.get("market", normalized_market),
         period_days=period_days,
         source_filter=normalized_source_filter,
+        today_only=today_only,
     )
     if not articles:
         if not gemini_analyzer.NEWS_API_KEY:
@@ -1267,6 +1269,7 @@ def create_sentiment_snapshot(
                 "period_days": period_days,
                 "source_filter": normalized_source_filter,
                 "source_filter_label": SENTIMENT_SOURCE_FILTER_LABELS[normalized_source_filter],
+                "today_only": today_only,
                 "news_api_enabled": bool(gemini_analyzer.NEWS_API_KEY),
             }
         )
@@ -1275,10 +1278,12 @@ def create_sentiment_snapshot(
         result_json = gemini_analyzer.analyze_sentiment_with_gemini(json.dumps(articles, ensure_ascii=False))
         result = json.loads(result_json)
     except Exception as exc:
+        logger.warning("Sentiment model unavailable; using headline classification: %s", exc)
         result = {
             "sentiment_score": 50,
-            "summary": f"AI 분석을 완료하지 못해 중립 점수로 대체했습니다. 사유: {exc}",
-            "investment_implications": "AI 요약이 실패해 투자 시사점을 분리하지 못했습니다.",
+            "summary": "오늘 뉴스 제목을 최신순으로 수집해 핵심 표현을 기준으로 분류했어요.",
+            "investment_implications": "제목 기반 보조 분류이므로 기사 원문과 공시를 함께 확인해 주세요.",
+            "article_sentiments": [],
             "articles": articles,
         }
 
@@ -1287,11 +1292,16 @@ def create_sentiment_snapshot(
     result["market"] = profile.get("market", normalized_market)
     result["krx_exchange"] = profile.get("krx_exchange", normalized_exchange)
     result["company_name"] = profile.get("name")
-    result["articles"] = result.get("articles", articles)
+    result["articles"] = gemini_analyzer.attach_article_sentiments(
+        articles,
+        result.get("article_sentiments"),
+    )
+    result.pop("article_sentiments", None)
     result["attempted_queries"] = attempted_queries
     result["period_days"] = period_days
     result["source_filter"] = normalized_source_filter
     result["source_filter_label"] = SENTIMENT_SOURCE_FILTER_LABELS[normalized_source_filter]
+    result["today_only"] = today_only
     result["news_api_enabled"] = bool(gemini_analyzer.NEWS_API_KEY)
     return normalize_value(result)
 
@@ -2771,9 +2781,60 @@ def create_sector_snapshot(market: str) -> dict[str, Any]:
     )
 
 
+def parse_localized_number(value: Any) -> float:
+    normalized = str(value or "").replace(",", "").strip()
+    if not normalized:
+        raise ValueError("empty numeric value")
+    return float(normalized)
+
+
+def fetch_naver_krx_quote(ticker: str) -> dict[str, Any] | None:
+    if not ticker.isdigit() or len(ticker) != 6:
+        return None
+
+    try:
+        response = requests.get(
+            f"https://m.stock.naver.com/api/stock/{ticker}/basic",
+            headers={"User-Agent": "Mozilla/5.0 (compatible; QuantInvestor/1.0)"},
+            timeout=5,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        close = parse_localized_number(payload.get("closePrice"))
+        change_amount = parse_localized_number(payload.get("compareToPreviousClosePrice"))
+        change_pct = parse_localized_number(payload.get("fluctuationsRatio"))
+        previous_close = close - change_amount
+        traded_at = str(payload.get("localTradedAt") or "").strip()
+        if not traded_at:
+            traded_at = datetime.now(ZoneInfo("Asia/Seoul")).isoformat()
+
+        return {
+            "ticker": ticker,
+            "resolved_ticker": f"{ticker}.KS" if payload.get("sosok") == "0" else f"{ticker}.KQ",
+            "market": "krx",
+            "krx_exchange": "kospi" if payload.get("sosok") == "0" else "kosdaq",
+            "company_name": payload.get("stockName"),
+            "as_of": traded_at,
+            "close": close,
+            "previous_close": previous_close,
+            "change_amount": change_amount,
+            "change_pct": change_pct,
+            "market_status": payload.get("marketStatus"),
+            "source": "naver_finance_realtime",
+        }
+    except (requests.RequestException, TypeError, ValueError, KeyError, json.JSONDecodeError):
+        logger.warning("Naver KRX quote fallback failed for %s", ticker, exc_info=True)
+        return None
+
+
 def create_quote_snapshot(ticker: str, market: str = "us", krx_exchange: str = "auto") -> dict[str, Any]:
     normalized_ticker = normalize_ticker_input(ticker)
     normalized_market, normalized_exchange = validate_market_params(market, krx_exchange)
+
+    if normalized_market == "krx":
+        naver_quote = fetch_naver_krx_quote(normalized_ticker)
+        if naver_quote:
+            return normalize_value(naver_quote)
 
     end_date = date.today() + timedelta(days=1)
     start_date = end_date - timedelta(days=40)
@@ -2817,6 +2878,8 @@ def create_quote_snapshot(ticker: str, market: str = "us", krx_exchange: str = "
             "previous_close": previous_close,
             "change_amount": change_amount,
             "change_pct": change_pct,
+            "market_status": None,
+            "source": "yfinance_daily",
         }
     )
 
@@ -3175,6 +3238,7 @@ def sentiment_analysis(
     krx_exchange: str = "auto",
     period_days: int = 7,
     source_filter: str = "all",
+    today_only: bool = False,
 ) -> dict[str, Any]:
     return create_sentiment_snapshot(
         ticker,
@@ -3182,6 +3246,7 @@ def sentiment_analysis(
         krx_exchange=krx_exchange,
         period_days=period_days,
         source_filter=source_filter,
+        today_only=today_only,
     )
 
 

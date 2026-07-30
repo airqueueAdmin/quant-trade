@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 
 import { GaugeChart } from '../../components/Charts'
 import { StepFlow } from '../../components/StepFlow'
@@ -105,12 +106,22 @@ function formatNewsDate(value?: string) {
 }
 
 export function AnalysisPage() {
+  const [searchParams] = useSearchParams()
+  const initialMarket: Market = searchParams.get('market') === 'krx' ? 'krx' : 'us'
+  const initialTicker = searchParams.get('ticker')?.trim().toUpperCase() || defaultTicker(initialMarket)
+  const requestedExchange = searchParams.get('krx_exchange')
+  const initialKrxExchange: KrxExchange =
+    requestedExchange === 'kospi' || requestedExchange === 'kosdaq' ? requestedExchange : 'auto'
   const analysisAd = useFullScreenAd(env.ads.rewardedAdGroupId)
   const { items: watchlist } = useWatchlist()
-  const [market, setMarket] = useState<Market>('us')
-  const [krxExchange, setKrxExchange] = useState<KrxExchange>('auto')
-  const [ticker, setTicker] = useState(defaultTicker('us'))
-  const [selectedQuickTicker, setSelectedQuickTicker] = useState<string | null>(null)
+  const [market, setMarket] = useState<Market>(initialMarket)
+  const [krxExchange, setKrxExchange] = useState<KrxExchange>(initialKrxExchange)
+  const [ticker, setTicker] = useState(initialTicker)
+  const [selectedQuickTicker, setSelectedQuickTicker] = useState<string | null>(
+    initialMarket === 'krx' && COMMON_KRX_COMPANIES.some((company) => company.ticker === initialTicker)
+      ? initialTicker
+      : null,
+  )
   const [searchQuery, setSearchQuery] = useState('')
   const [searchLoading, setSearchLoading] = useState(false)
   const [searchError, setSearchError] = useState<string | null>(null)
@@ -429,7 +440,7 @@ export function AnalysisPage() {
                       >
                         <strong>{article.title}</strong>
                         <span className="article-list__meta">
-                          <span>{article.source ?? '뉴스'}</span>
+                          <span>{article.source_name ?? article.source ?? '뉴스'}</span>
                           <time dateTime={article.published_at}>{formatNewsDate(article.published_at)}</time>
                           <b>원문 보기</b>
                         </span>

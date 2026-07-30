@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 
 import { LineChart } from '../../components/Charts'
 import { StepFlow } from '../../components/StepFlow'
@@ -220,24 +221,34 @@ function sortOptimizationResults(result: OptimizationResult) {
 }
 
 export function StrategySimulationPage() {
+  const [searchParams] = useSearchParams()
+  const initialMarket: Market = searchParams.get('market') === 'krx' ? 'krx' : 'us'
+  const initialTicker = searchParams.get('ticker')?.trim().toUpperCase() || defaultTicker(initialMarket)
+  const requestedExchange = searchParams.get('krx_exchange')
+  const initialKrxExchange: KrxExchange =
+    requestedExchange === 'kospi' || requestedExchange === 'kosdaq' ? requestedExchange : 'auto'
   const commonKrxCompanies = useMemo(() => COMMON_KRX_COMPANIES, [])
   const dateRange = useMemo(() => defaultDateRange(), [])
 
-  const [market, setMarket] = useState<Market>('us')
+  const [market, setMarket] = useState<Market>(initialMarket)
   const [mode, setMode] = useState<SimulationMode>('backtest')
   const [strategy, setStrategy] = useState<StrategyKey>('moving_average')
-  const [ticker, setTicker] = useState(defaultTicker('us'))
-  const [selectedQuickTicker, setSelectedQuickTicker] = useState<string | null>(null)
-  const [krxExchange, setKrxExchange] = useState<KrxExchange>('auto')
+  const [ticker, setTicker] = useState(initialTicker)
+  const [selectedQuickTicker, setSelectedQuickTicker] = useState<string | null>(
+    initialMarket === 'krx' && COMMON_KRX_COMPANIES.some((company) => company.ticker === initialTicker)
+      ? initialTicker
+      : null,
+  )
+  const [krxExchange, setKrxExchange] = useState<KrxExchange>(initialKrxExchange)
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<KRXSearchResult[]>([])
   const [searchLoading, setSearchLoading] = useState(false)
   const [searchError, setSearchError] = useState<string | null>(null)
   const [startDate, setStartDate] = useState(dateRange.startDate)
   const [endDate, setEndDate] = useState(dateRange.endDate)
-  const [initialCapital, setInitialCapital] = useState(defaultInitialCapital('us'))
+  const [initialCapital, setInitialCapital] = useState(defaultInitialCapital(initialMarket))
   const [orderType, setOrderType] = useState<OrderType>('all_in')
-  const [fixedAmount, setFixedAmount] = useState(defaultFixedAmount('us'))
+  const [fixedAmount, setFixedAmount] = useState(defaultFixedAmount(initialMarket))
   const [metricToOptimize, setMetricToOptimize] = useState<StrategyMetric>('sharpe_ratio')
   const [shortWindow, setShortWindow] = useState('20')
   const [longWindow, setLongWindow] = useState('50')

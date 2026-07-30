@@ -2,10 +2,15 @@ import os
 import requests
 from dotenv import load_dotenv
 import json
-from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
+from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
-from pydantic import BaseModel, Field
+from typing import Literal
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from zoneinfo import ZoneInfo
+from xml.etree import ElementTree
+
+from pydantic import BaseModel, Field
 
 try:
     from google import genai
@@ -42,12 +47,84 @@ if genai is None:
     print("경고: google-genai 패키지가 설치되지 않았습니다.")
 
 client = genai.Client(api_key=GEMINI_API_KEY) if genai and GEMINI_API_KEY else None
+KST = ZoneInfo("Asia/Seoul")
+POSITIVE_NEWS_TERMS = (
+    "사상 최대",
+    "최대 실적",
+    "호실적",
+    "깜짝 실적",
+    "상향",
+    "성장",
+    "증가",
+    "확대",
+    "수주",
+    "공급 계약",
+    "협력",
+    "파트너십",
+    "양산",
+    "승인",
+    "반등",
+    "목표가 상향",
+    "목표주가 상향",
+    "목표가 올",
+    "목표주가 올",
+    "record",
+    "beats",
+    "beat estimates",
+    "growth",
+    "raises",
+    "raised",
+    "partnership",
+    "supply deal",
+    "expands",
+    "profit rises",
+)
+NEGATIVE_NEWS_TERMS = (
+    "급락",
+    "하락",
+    "우려",
+    "위험",
+    "리스크",
+    "부진",
+    "감소",
+    "하향",
+    "규제",
+    "제재",
+    "경쟁 심화",
+    "매도",
+    "적자",
+    "조사",
+    "차질",
+    "소송",
+    "반토막",
+    "약세",
+    "어닝 미스",
+    "plunge",
+    "slump",
+    "falls",
+    "falling",
+    "drop",
+    "concern",
+    "risk",
+    "downgrade",
+    "decline",
+    "lawsuit",
+    "delay",
+    "weak",
+)
+
+
+class ArticleSentimentResult(BaseModel):
+    title: str
+    sentiment: Literal["positive", "negative", "neutral"]
+    reason: str
 
 
 class SentimentAnalysisResult(BaseModel):
     sentiment_score: int = Field(ge=0, le=100)
     summary: str
     investment_implications: str
+    article_sentiments: list[ArticleSentimentResult] = Field(default_factory=list)
 
 
 @lru_cache(maxsize=32)
@@ -95,6 +172,64 @@ def get_news(query: str, language: str = 'en', page_size: int = 10, period_days:
         return tuple(normalized_articles)
     except requests.exceptions.RequestException:
         return tuple()
+
+
+@lru_cache(maxsize=32)
+def get_google_news_rss(
+    query: str,
+    language: str = "ko",
+    page_size: int = 10,
+    period_days: int = 1,
+):
+    locale = "ko" if language == "ko" else "en-US"
+    country = "KR" if language == "ko" else "US"
+    ceid = f"{country}:{'ko' if language == 'ko' else 'en'}"
+    try:
+        response = requests.get(
+            "https://news.google.com/rss/search",
+            params={
+                "q": f"{query} when:{max(1, int(period_days))}d",
+                "hl": locale,
+                "gl": country,
+                "ceid": ceid,
+            },
+            headers={"User-Agent": "Mozilla/5.0 (compatible; QuantInvestor/1.0)"},
+            timeout=10,
+        )
+        response.raise_for_status()
+        root = ElementTree.fromstring(response.content)
+    except (requests.RequestException, ElementTree.ParseError):
+        return tuple()
+
+    normalized_articles: list[dict] = []
+    for item in root.findall("./channel/item"):
+        title = str(item.findtext("title") or "").strip()
+        url = str(item.findtext("link") or "").strip()
+        source_name = str(item.findtext("source") or "").strip() or None
+        published_at = None
+        raw_published_at = str(item.findtext("pubDate") or "").strip()
+        if raw_published_at:
+            try:
+                parsed = parsedate_to_datetime(raw_published_at)
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                published_at = parsed.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+            except (TypeError, ValueError):
+                published_at = None
+
+        if not title or not url:
+            continue
+        normalized_articles.append(
+            {
+                "title": title,
+                "url": url,
+                "source_name": source_name,
+                "published_at": published_at,
+            }
+        )
+        if len(normalized_articles) >= page_size:
+            break
+    return tuple(normalized_articles)
 
 
 def normalize_article_title(title: str) -> str:
@@ -152,6 +287,32 @@ def filter_articles_by_source(articles: list[dict], source_filter: str) -> list[
     return articles
 
 
+def parse_published_at(value: str | None) -> datetime | None:
+    normalized = str(value or "").strip()
+    if not normalized:
+        return None
+    try:
+        parsed = datetime.fromisoformat(normalized.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def filter_articles_for_kst_date(
+    articles: list[dict],
+    target_date: date | None = None,
+) -> list[dict]:
+    selected_date = target_date or datetime.now(KST).date()
+    return [
+        article
+        for article in articles
+        if (published_at := parse_published_at(article.get("published_at")))
+        and published_at.astimezone(KST).date() == selected_date
+    ]
+
+
 def get_news_candidates(
     company_name: str | None,
     ticker: str,
@@ -159,6 +320,7 @@ def get_news_candidates(
     page_size: int = 10,
     period_days: int = 7,
     source_filter: str = "all",
+    today_only: bool = False,
 ) -> tuple[tuple[dict, ...], list[dict[str, str]]]:
     queries: list[tuple[str, str]] = []
     normalized_ticker = str(ticker).strip().upper()
@@ -185,12 +347,87 @@ def get_news_candidates(
         articles = get_news(query, language=language, page_size=page_size, period_days=period_days)
         collected_articles.extend(list(articles))
 
+    if normalized_name:
+        rss_language = "ko" if market == "krx" else "en"
+        attempted.append(
+            {
+                "query": normalized_name,
+                "language": rss_language,
+                "source": "google_news_rss",
+            }
+        )
+        collected_articles.extend(
+            get_google_news_rss(
+                normalized_name,
+                language=rss_language,
+                page_size=page_size,
+                period_days=period_days,
+            )
+        )
+
     filtered_articles = filter_articles_by_source(
         deduplicate_articles(collected_articles),
         source_filter=source_filter,
     )
+    if today_only:
+        filtered_articles = filter_articles_for_kst_date(filtered_articles)
     filtered_articles = sorted(filtered_articles, key=published_at_sort_key, reverse=True)[:page_size]
     return tuple(filtered_articles), attempted
+
+
+def fallback_article_sentiment(title: str) -> dict[str, str]:
+    normalized_title = " ".join(str(title).lower().split())
+    positive_hits = [term for term in POSITIVE_NEWS_TERMS if term in normalized_title]
+    negative_hits = [term for term in NEGATIVE_NEWS_TERMS if term in normalized_title]
+
+    if len(positive_hits) > len(negative_hits):
+        return {
+            "sentiment": "positive",
+            "reason": "제목의 실적·성장·계약 관련 긍정 표현을 반영했어요.",
+        }
+    if len(negative_hits) > len(positive_hits):
+        return {
+            "sentiment": "negative",
+            "reason": "제목의 하락·우려·위험 관련 부정 표현을 반영했어요.",
+        }
+    return {
+        "sentiment": "neutral",
+        "reason": "제목만으로 투자 방향을 단정하기 어려운 소식이에요.",
+    }
+
+
+def attach_article_sentiments(
+    articles: list[dict] | tuple[dict, ...],
+    classifications: list[dict] | None,
+) -> list[dict]:
+    classification_by_title = {
+        normalize_article_title(item.get("title") or ""): item
+        for item in classifications or []
+        if item.get("title")
+    }
+    enriched_articles: list[dict] = []
+
+    for article in articles:
+        copied = dict(article)
+        classification = classification_by_title.get(
+            normalize_article_title(copied.get("title") or "")
+        )
+        if classification:
+            sentiment = str(classification.get("sentiment") or "neutral").lower()
+            if sentiment not in {"positive", "negative", "neutral"}:
+                sentiment = "neutral"
+            copied["sentiment"] = sentiment
+            copied["sentiment_reason"] = (
+                str(classification.get("reason") or "").strip()
+                or fallback_article_sentiment(copied.get("title") or "")["reason"]
+            )
+        else:
+            fallback = fallback_article_sentiment(copied.get("title") or "")
+            copied["sentiment"] = fallback["sentiment"]
+            copied["sentiment_reason"] = fallback["reason"]
+        enriched_articles.append(copied)
+
+    return enriched_articles
 
 @lru_cache(maxsize=32)
 def analyze_sentiment_with_gemini(articles_json: str):
@@ -208,6 +445,7 @@ def analyze_sentiment_with_gemini(articles_json: str):
                 "sentiment_score": 50,
                 "summary": "분석할 뉴스를 찾을 수 없습니다.",
                 "investment_implications": "참고할 뉴스가 없어 투자 시사점을 분리할 수 없습니다.",
+                "article_sentiments": [],
                 "articles": [],
             }
         )
@@ -228,7 +466,10 @@ def analyze_sentiment_with_gemini(articles_json: str):
         Also, provide:
         1. a brief, neutral summary of the key news themes in Korean (2-3 sentences)
         2. a separate Korean field called "investment_implications" that explains what investors should watch next in 1-2 sentences without giving direct buy/sell orders.
-        The final output must be a JSON object with three keys: "sentiment_score", "summary", "investment_implications".
+        3. an "article_sentiments" array classifying every headline as "positive", "negative", or "neutral".
+           Each item must contain the exact original "title", a "sentiment", and a brief Korean "reason".
+           Classify from an investor-impact perspective, acknowledge mixed effects as neutral, and never invent facts beyond the headline.
+        The final output must be a JSON object with four keys: "sentiment_score", "summary", "investment_implications", "article_sentiments".
 
         News Headlines:
         {prompt_articles}
@@ -244,7 +485,7 @@ def analyze_sentiment_with_gemini(articles_json: str):
                     "response_mime_type": "application/json",
                     "response_schema": SentimentAnalysisResult,
                     "temperature": 0.2,
-                    "max_output_tokens": 300,
+                    "max_output_tokens": 1400,
                 },
             )
 
@@ -264,6 +505,7 @@ def analyze_sentiment_with_gemini(articles_json: str):
         "sentiment_score": 50,
         "summary": "사용 가능한 stable Gemini 모델 호출이 모두 실패했습니다.",
         "investment_implications": "모델 호출 실패로 투자 시사점을 분리하지 못했습니다.",
+        "article_sentiments": [],
         "articles": articles,
         "model_attempts": list(PREFERRED_GEMINI_MODELS),
         "errors": errors,
