@@ -53,7 +53,9 @@ services:
     build:
       context: ./toss-inapp
       args:
-        VITE_BACKEND_URL: ${TOSS_INAPP_VITE_BACKEND_URL:-http://localhost:8000}
+        # Docker Compose is the local stack. Keep its browser-facing API URL
+        # separate from the production deployment URL in .env.production.
+        VITE_BACKEND_URL: ${TOSS_INAPP_DOCKER_BACKEND_URL:-http://127.0.0.1:8000}
     container_name: quant-toss-inapp
     depends_on:
       backend:

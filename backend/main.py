@@ -846,6 +846,8 @@ def ensure_data(ticker: str, start_date: str, end_date: str, market: str = "us",
 
 
 def normalize_value(value: Any) -> Any:
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
     if isinstance(value, (np.float64, np.float32, float)):
         if np.isinf(value) or np.isnan(value):
             return 0
@@ -1064,6 +1066,7 @@ def get_paper_trading_state(account_id: str) -> dict[str, Any]:
             "seed_cash_krw": account.get("seed_cash_krw", DEFAULT_PAPER_SEED_CASH_KRW),
             "holdings": holdings,
             "trades": trades,
+            "ranking_profile": build_paper_ranking_profile(account_id),
             "updated_at": account.get("updated_at"),
         }
     )
@@ -1098,6 +1101,239 @@ def reset_paper_trading_account(account_id: str) -> dict[str, Any]:
         prefer="return=representation",
     )
     return normalize_value({"account_id": account_id, "result": result})
+
+
+PAPER_RANKING_ADJECTIVES = (
+    "차분한",
+    "꾸준한",
+    "날쌘",
+    "영리한",
+    "담대한",
+    "신중한",
+    "반짝이는",
+    "부지런한",
+)
+PAPER_RANKING_ANIMALS = (
+    "수달",
+    "여우",
+    "다람쥐",
+    "부엉이",
+    "호랑이",
+    "토끼",
+    "펭귄",
+    "고래",
+)
+PAPER_RANKING_COLORS = ("blue", "purple", "green", "orange", "pink")
+
+
+def build_paper_ranking_profile(account_id: str) -> dict[str, str]:
+    """Build a stable public profile without exposing the account identifier."""
+    digest = hashlib.sha256(f"paper-ranking:{account_id}".encode("utf-8")).digest()
+    adjective = PAPER_RANKING_ADJECTIVES[digest[0] % len(PAPER_RANKING_ADJECTIVES)]
+    animal = PAPER_RANKING_ANIMALS[digest[1] % len(PAPER_RANKING_ANIMALS)]
+    suffix = 100 + int.from_bytes(digest[2:4], "big") % 900
+    return {
+        "nickname": f"{adjective} {animal} {suffix}",
+        "profile_color": PAPER_RANKING_COLORS[digest[4] % len(PAPER_RANKING_COLORS)],
+    }
+
+
+def build_paper_trading_leaderboard(
+    accounts: list[dict[str, Any]],
+    positions: list[dict[str, Any]],
+    quote_prices: dict[tuple[str, str], dict[str, Any]],
+    current_account_id: str,
+    *,
+    sort_by: str = "return",
+    limit: int = 50,
+) -> dict[str, Any]:
+    if sort_by not in {"return", "assets"}:
+        raise ValueError("sort_by must be 'return' or 'assets'")
+
+    positions_by_account: dict[str, list[dict[str, Any]]] = {}
+    for position in positions:
+        position_account_id = str(position.get("account_id") or "")
+        if not position_account_id:
+            continue
+        positions_by_account.setdefault(position_account_id, []).append(position)
+
+    entries: list[dict[str, Any]] = []
+    for account in accounts:
+        account_id = str(account.get("account_id") or "")
+        if not account_id:
+            continue
+
+        cash_krw = float(account.get("cash_krw") or 0)
+        seed_cash_krw = float(account.get("seed_cash_krw") or DEFAULT_PAPER_SEED_CASH_KRW)
+        account_positions = positions_by_account.get(account_id, [])
+        holdings_value = 0.0
+        missing_quote_count = 0
+        top_holding: dict[str, Any] | None = None
+
+        for position in account_positions:
+            ticker = str(position.get("ticker") or "")
+            exchange = str(position.get("krx_exchange") or "auto")
+            shares = float(position.get("shares") or 0)
+            average_price = float(position.get("avg_price") or 0)
+            quote = quote_prices.get((ticker, exchange)) or quote_prices.get((ticker, "auto"))
+            if quote and quote.get("close") is not None:
+                current_price = float(quote["close"])
+            else:
+                current_price = average_price
+                missing_quote_count += 1
+            market_value = max(0.0, shares * current_price)
+            holdings_value += market_value
+
+            if top_holding is None or market_value > float(top_holding["market_value"]):
+                top_holding = {
+                    "ticker": ticker,
+                    "company_name": position.get("company_name") or ticker,
+                    "market_value": market_value,
+                }
+
+        total_assets = cash_krw + holdings_value
+        profit_krw = total_assets - seed_cash_krw
+        total_return_pct = (profit_krw / seed_cash_krw) * 100 if seed_cash_krw > 0 else 0.0
+        if top_holding is not None:
+            top_holding["allocation_pct"] = (
+                float(top_holding["market_value"]) / total_assets * 100 if total_assets > 0 else 0.0
+            )
+            top_holding.pop("market_value", None)
+
+        profile = build_paper_ranking_profile(account_id)
+        entries.append(
+            {
+                "_account_id": account_id,
+                **profile,
+                "is_me": account_id == current_account_id,
+                "total_assets_krw": round(total_assets),
+                "profit_krw": round(profit_krw),
+                "total_return_pct": round(total_return_pct, 4),
+                "holding_count": len(account_positions),
+                "top_holding": top_holding,
+                "updated_at": account.get("updated_at"),
+                "valuation_status": "partial" if missing_quote_count else "complete",
+            }
+        )
+
+    if sort_by == "assets":
+        entries.sort(
+            key=lambda item: (float(item["total_assets_krw"]), float(item["total_return_pct"])),
+            reverse=True,
+        )
+        rank_metric = "total_assets_krw"
+    else:
+        entries.sort(
+            key=lambda item: (float(item["total_return_pct"]), float(item["total_assets_krw"])),
+            reverse=True,
+        )
+        rank_metric = "total_return_pct"
+
+    previous_metric: float | None = None
+    current_rank = 0
+    for index, entry in enumerate(entries):
+        metric = float(entry[rank_metric])
+        if previous_metric is None or metric != previous_metric:
+            current_rank = index + 1
+            previous_metric = metric
+        entry["rank"] = current_rank
+
+    public_entries = [{key: value for key, value in entry.items() if key != "_account_id"} for entry in entries]
+    my_entry = next((entry for entry in public_entries if entry["is_me"]), None)
+    returns = [float(entry["total_return_pct"]) for entry in public_entries]
+
+    return normalize_value(
+        {
+            "sort_by": sort_by,
+            "participant_count": len(public_entries),
+            "profitable_count": sum(1 for value in returns if value > 0),
+            "average_return_pct": round(sum(returns) / len(returns), 4) if returns else 0,
+            "best_return_pct": max(returns) if returns else 0,
+            "entries": public_entries[: max(1, min(limit, 100))],
+            "my_entry": my_entry,
+        }
+    )
+
+
+def get_paper_trading_leaderboard(
+    account_id: str,
+    *,
+    sort_by: str = "return",
+    limit: int = 50,
+) -> dict[str, Any]:
+    if sort_by not in {"return", "assets"}:
+        raise HTTPException(status_code=400, detail="sort_by는 return 또는 assets여야 합니다.")
+
+    ensure_paper_account(account_id)
+    accounts = call_supabase(
+        "GET",
+        "/rest/v1/paper_trading_accounts",
+        params={
+            "select": "account_id,cash_krw,seed_cash_krw,updated_at",
+            "order": "updated_at.desc",
+            "limit": 500,
+        },
+    ) or []
+    positions = call_supabase(
+        "GET",
+        "/rest/v1/paper_trading_positions",
+        params={
+            "select": "account_id,ticker,company_name,krx_exchange,shares,avg_price,updated_at",
+            "limit": 5000,
+        },
+    ) or []
+
+    trades = call_supabase(
+        "GET",
+        "/rest/v1/paper_trading_trades",
+        params={
+            "select": "account_id",
+            "order": "traded_at.desc",
+            "limit": 5000,
+        },
+    ) or []
+    participant_account_ids = {
+        str(row.get("account_id") or "")
+        for row in [*positions, *trades]
+        if row.get("account_id")
+    }
+    accounts = [
+        account
+        for account in accounts
+        if str(account.get("account_id") or "") in participant_account_ids
+    ]
+    positions = [
+        position
+        for position in positions
+        if str(position.get("account_id") or "") in participant_account_ids
+    ]
+
+    quote_prices: dict[tuple[str, str], dict[str, Any]] = {}
+    quote_keys = {
+        (str(position.get("ticker") or ""), str(position.get("krx_exchange") or "auto"))
+        for position in positions
+        if position.get("ticker")
+    }
+    for ticker, exchange in quote_keys:
+        try:
+            quote_prices[(ticker, exchange)] = create_quote_snapshot(
+                ticker,
+                market="krx",
+                krx_exchange=exchange,
+            )
+        except Exception:
+            logger.warning("Paper ranking quote fallback used for %s", ticker, exc_info=True)
+
+    result = build_paper_trading_leaderboard(
+        accounts,
+        positions,
+        quote_prices,
+        account_id,
+        sort_by=sort_by,
+        limit=limit,
+    )
+    result["as_of"] = datetime.now(ZoneInfo("Asia/Seoul")).isoformat()
+    return result
 
 
 def build_backtest_performance_summary(result_payload: dict[str, Any], run_type: str) -> dict[str, Any]:
@@ -3211,6 +3447,21 @@ def paper_trading_state(
 ) -> dict[str, Any]:
     normalized_account_id = resolve_paper_account_id(account_id, x_app_session)
     return get_paper_trading_state(normalized_account_id)
+
+
+@app.get("/paper-trading/rankings")
+def paper_trading_rankings(
+    sort_by: str = "return",
+    limit: int = 50,
+    account_id: str | None = None,
+    x_app_session: str | None = Header(default=None, alias="X-App-Session"),
+) -> dict[str, Any]:
+    normalized_account_id = resolve_paper_account_id(account_id, x_app_session)
+    return get_paper_trading_leaderboard(
+        normalized_account_id,
+        sort_by=sort_by,
+        limit=max(1, min(limit, 100)),
+    )
 
 
 @app.post("/paper-trading/order")

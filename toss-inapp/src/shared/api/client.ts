@@ -15,6 +15,8 @@ import type {
   MovingAverageOptimizationRequest,
   OptimizationResult,
   PaperTradingOrderRequest,
+  PaperTradingRankingResponse,
+  PaperTradingRankingSort,
   PaperTradingState,
   QuoteSnapshot,
   RSIBacktestRequest,
@@ -153,6 +155,18 @@ export const apiClient = {
 
   paperTradingState(sessionToken: string, signal?: AbortSignal) {
     return apiRequest<PaperTradingState>('/paper-trading/state', {
+      headers: { 'X-App-Session': sessionToken },
+      signal,
+    })
+  },
+
+  paperTradingRankings(
+    sessionToken: string,
+    sortBy: PaperTradingRankingSort = 'return',
+    signal?: AbortSignal,
+  ) {
+    return apiRequest<PaperTradingRankingResponse>('/paper-trading/rankings', {
+      params: { sort_by: sortBy, limit: 50 },
       headers: { 'X-App-Session': sessionToken },
       signal,
     })

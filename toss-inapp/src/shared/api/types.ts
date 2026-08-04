@@ -198,7 +198,42 @@ export type PaperTradingState = {
   seed_cash_krw: number
   holdings: PaperTradingHolding[]
   trades: PaperTradingTrade[]
+  ranking_profile?: {
+    nickname: string
+    profile_color: 'blue' | 'purple' | 'green' | 'orange' | 'pink'
+  }
   updated_at?: string | null
+}
+
+export type PaperTradingRankingSort = 'return' | 'assets'
+
+export type PaperTradingRankingEntry = {
+  rank: number
+  nickname: string
+  profile_color: 'blue' | 'purple' | 'green' | 'orange' | 'pink'
+  is_me: boolean
+  total_assets_krw: number
+  profit_krw: number
+  total_return_pct: number
+  holding_count: number
+  top_holding?: {
+    ticker: string
+    company_name: string
+    allocation_pct: number
+  } | null
+  updated_at?: string | null
+  valuation_status: 'complete' | 'partial'
+}
+
+export type PaperTradingRankingResponse = {
+  sort_by: PaperTradingRankingSort
+  participant_count: number
+  profitable_count: number
+  average_return_pct: number
+  best_return_pct: number
+  entries: PaperTradingRankingEntry[]
+  my_entry?: PaperTradingRankingEntry | null
+  as_of: string
 }
 
 export type PaperTradingOrderRequest = {

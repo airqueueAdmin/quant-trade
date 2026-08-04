@@ -31,6 +31,11 @@ const MORE_NAV_ITEMS = [
     description: '실제 돈 없이 매매와 계좌 관리를 연습해요.',
   },
   {
+    to: '/paper-trading/rankings',
+    label: '투자 랭킹',
+    description: '다른 투자자와 수익률을 비교하고 내 순위를 확인해요.',
+  },
+  {
     to: '/strategy-simulation',
     label: '전략 연습',
     description: '과거 데이터로 투자 전략을 검증해요.',

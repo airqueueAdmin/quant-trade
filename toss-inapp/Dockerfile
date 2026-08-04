@@ -2,11 +2,13 @@ FROM node:22-alpine AS builder
 
 WORKDIR /app
 
-ARG VITE_BACKEND_URL=http://localhost:8000
-ENV VITE_BACKEND_URL=${VITE_BACKEND_URL}
-
 COPY package.json package-lock.json ./
 RUN npm ci
+
+# Keep the environment-specific URL after dependency installation so changing
+# between local and deployed backends does not invalidate the npm cache.
+ARG VITE_BACKEND_URL=http://127.0.0.1:8000
+ENV VITE_BACKEND_URL=${VITE_BACKEND_URL}
 
 COPY tsconfig.json tsconfig.app.json tsconfig.node.json vite.config.ts index.html granite.config.ts ./
 COPY .env.production ./.env.production

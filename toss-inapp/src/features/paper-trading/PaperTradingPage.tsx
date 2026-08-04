@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { getAnonymousKey } from '@apps-in-toss/web-bridge'
-import { useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 
 import { apiClient } from '../../shared/api/client'
 import { ApiError } from '../../shared/api/http'
@@ -519,6 +519,15 @@ export function PaperTradingPage() {
         <p>자산을 확인하고 바로 주문을 연습해보세요.</p>
       </header>
 
+      <Link className="paper-ranking-link" to="/paper-trading/rankings">
+        <span className="paper-ranking-link__icon" aria-hidden="true">🏆</span>
+        <span>
+          <strong>모의투자 랭킹</strong>
+          <small>내 수익률은 상위 몇 %인지 확인해보세요</small>
+        </span>
+        <b aria-hidden="true">›</b>
+      </Link>
+
       <section className="paper-account-card" aria-label="모의계좌 요약">
         <div className="paper-account-card__top">
           <div>
@@ -559,13 +568,26 @@ export function PaperTradingPage() {
         <details className="paper-account-management">
           <summary>계좌 관리</summary>
           <div className="paper-account-management__body">
+            <div className="paper-ranking-identity">
+              <span
+                className={`ranking-avatar ranking-avatar--compact ranking-avatar--${paperState?.ranking_profile?.profile_color ?? 'blue'}`}
+                aria-hidden="true"
+              >
+                {paperState?.ranking_profile?.nickname.split(' ')[1]?.slice(0, 1) ?? '나'}
+              </span>
+              <div>
+                <span>내 랭킹 이름</span>
+                <strong>{paperState?.ranking_profile?.nickname ?? '랭킹 이름 준비 중'}</strong>
+                <p>모의투자 랭킹에서 다른 사용자에게 이 이름으로 표시돼요.</p>
+              </div>
+            </div>
             <div className="paper-account-identity">
-              <span>계좌 번호</span>
+              <span>모의계좌 식별번호</span>
               <strong>모의 · {accountSuffix}</strong>
               <p>
                 {isTossLinked
-                  ? '토스 사용자 키로 안전하게 연결되어 다른 기기에서도 같은 기록을 불러옵니다.'
-                  : '토스 앱에서 열면 사용자 키에 연결되어 다른 기기에서도 이어볼 수 있습니다.'}
+                  ? '계좌 식별번호와 토스 사용자 정보는 랭킹에 공개되지 않아요.'
+                  : '이 번호는 계좌를 구분하기 위한 값이며 랭킹에는 공개되지 않아요.'}
               </p>
             </div>
             {!resetConfirming ? (
