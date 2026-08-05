@@ -4,8 +4,9 @@ import { Link, useSearchParams } from 'react-router-dom'
 
 import { apiClient } from '../../shared/api/client'
 import { ApiError } from '../../shared/api/http'
-import type { KrxExchange, KRXSearchResult, PaperTradingState, QuoteSnapshot } from '../../shared/api/types'
+import type { KrxExchange, KRXSearchResult, Market, PaperTradingState, QuoteSnapshot } from '../../shared/api/types'
 import { clearStoredSession, readStoredSession, writeStoredSession, type AppSession } from '../../shared/session/appSession'
+import { POPULAR_US_STOCKS, searchLocalUsStocks, usStockToCompany } from '../../shared/stocks/usStocks'
 
 const KST_TIME_ZONE = 'Asia/Seoul'
 
@@ -42,6 +43,7 @@ function mergeSearchResults(primary: KRXSearchResult[], secondary: KRXSearchResu
 type EnrichedHolding = {
   ticker: string
   companyName: string
+  market: Market
   krxExchange: KrxExchange
   shares: number
   avgPrice: number
@@ -50,6 +52,15 @@ type EnrichedHolding = {
   pnlAmount: number | null
   pnlPct: number | null
   asOf?: string
+}
+
+function formatMarketPrice(value: number | undefined | null, market: Market) {
+  if (value === undefined || value === null) {
+    return '-'
+  }
+  return market === 'us'
+    ? `$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    : formatKrw(value)
 }
 
 function formatKrw(value?: number | null) {
@@ -100,11 +111,15 @@ function formatTradeTime(value?: string | null) {
 
 export function PaperTradingPage() {
   const [searchParams] = useSearchParams()
-  const requestedTicker = searchParams.get('ticker')?.trim()
-  const initialCompany =
-    COMMON_KRX_COMPANIES.find((company) => company.ticker === requestedTicker) ??
-    COMMON_KRX_COMPANIES[0]
+  const initialMarket: Market = searchParams.get('market') === 'us' ? 'us' : 'krx'
+  const requestedTicker = searchParams.get('ticker')?.trim().toUpperCase()
+  const initialCompanies = initialMarket === 'krx' ? COMMON_KRX_COMPANIES : POPULAR_US_STOCKS.map(usStockToCompany)
+  const initialCompany = initialCompanies.find((company) => company.ticker === requestedTicker)
+    ?? (requestedTicker
+      ? { name: requestedTicker, ticker: requestedTicker, krx_exchange: 'auto' as KrxExchange }
+      : initialCompanies[0])
   const [session, setSession] = useState<AppSession | null>(() => readStoredSession())
+  const [market, setMarket] = useState<Market>(initialMarket)
   const [selectedCompany, setSelectedCompany] = useState<KRXSearchResult>(initialCompany)
   const [paperState, setPaperState] = useState<PaperTradingState | null>(null)
   const [sessionLoading, setSessionLoading] = useState(true)
@@ -119,6 +134,7 @@ export function PaperTradingPage() {
   const [quote, setQuote] = useState<QuoteSnapshot | null>(null)
   const [quoteLoading, setQuoteLoading] = useState(false)
   const [quoteError, setQuoteError] = useState<string | null>(null)
+  const [usdKrwRate, setUsdKrwRate] = useState<number | null>(null)
   const [holdings, setHoldings] = useState<EnrichedHolding[]>([])
   const [orderSide, setOrderSide] = useState<'buy' | 'sell'>('buy')
   const [orderShares, setOrderShares] = useState('1')
@@ -129,7 +145,24 @@ export function PaperTradingPage() {
   const [actionMessage, setActionMessage] = useState<string | null>(null)
   const companySearchInputRef = useRef<HTMLInputElement>(null)
 
-  const commonKrxCompanies = useMemo(() => COMMON_KRX_COMPANIES, [])
+  const commonCompanies = useMemo(
+    () => market === 'krx' ? COMMON_KRX_COMPANIES : POPULAR_US_STOCKS.map(usStockToCompany),
+    [market],
+  )
+
+  function handleMarketChange(nextMarket: Market) {
+    if (nextMarket === market) {
+      return
+    }
+    const nextCompanies = nextMarket === 'krx' ? COMMON_KRX_COMPANIES : POPULAR_US_STOCKS.map(usStockToCompany)
+    setMarket(nextMarket)
+    setSelectedCompany(nextCompanies[0])
+    setSearchQuery('')
+    setSearchResults([])
+    setSearchError(null)
+    setActionMessage(null)
+    setOrderShares('1')
+  }
 
   function handleSelectCompany(company: KRXSearchResult) {
     setSelectedCompany(company)
@@ -143,7 +176,7 @@ export function PaperTradingPage() {
     setSearchQuery(value)
     setSearchError(null)
     setIsCompanySearchOpen(Boolean(value.trim()))
-    setSearchResults(searchLocalCompanies(value, commonKrxCompanies))
+    setSearchResults(market === 'krx' ? searchLocalCompanies(value, commonCompanies) : searchLocalUsStocks(value))
   }
 
   useEffect(() => {
@@ -272,6 +305,28 @@ export function PaperTradingPage() {
   }, [refreshToken, session, sessionLoading])
 
   useEffect(() => {
+    let disposed = false
+
+    async function loadExchangeRate() {
+      try {
+        const response = await apiClient.usdKrwRate()
+        if (!disposed) {
+          setUsdKrwRate(Number(response.rate))
+        }
+      } catch {
+        if (!disposed) {
+          setUsdKrwRate(null)
+        }
+      }
+    }
+
+    void loadExchangeRate()
+    return () => {
+      disposed = true
+    }
+  }, [refreshToken])
+
+  useEffect(() => {
     const abortController = new AbortController()
 
     async function loadSelectedQuote() {
@@ -280,7 +335,7 @@ export function PaperTradingPage() {
       try {
         const response = await apiClient.quote(
           selectedCompany.ticker,
-          'krx',
+          market,
           selectedCompany.krx_exchange,
           abortController.signal,
         )
@@ -306,7 +361,7 @@ export function PaperTradingPage() {
 
     void loadSelectedQuote()
     return () => abortController.abort()
-  }, [selectedCompany, refreshToken])
+  }, [market, selectedCompany, refreshToken])
 
   useEffect(() => {
     let disposed = false
@@ -328,19 +383,22 @@ export function PaperTradingPage() {
           try {
             const holdingQuote = await apiClient.quote(
               holding.ticker,
-              'krx',
+              holding.market,
               holding.krx_exchange ?? 'auto',
             )
             const shares = Number(holding.shares)
             const avgPrice = Number(holding.avg_price)
             const currentPrice = Number(holdingQuote.close)
-            const marketValue = currentPrice * shares
-            const pnlAmount = marketValue - avgPrice * shares
-            const pnlPct = avgPrice > 0 ? ((currentPrice / avgPrice) - 1) * 100 : 0
+            const rate = holding.market === 'us' ? usdKrwRate : 1
+            const currentPriceKrw = rate ? currentPrice * rate : null
+            const marketValue = (currentPriceKrw ?? avgPrice) * shares
+            const pnlAmount = currentPriceKrw === null ? null : marketValue - avgPrice * shares
+            const pnlPct = avgPrice > 0 && currentPriceKrw !== null ? ((currentPriceKrw / avgPrice) - 1) * 100 : null
 
             const result: EnrichedHolding = {
               ticker: holding.ticker,
               companyName: holding.company_name || holding.ticker,
+              market: holding.market,
               krxExchange: holding.krx_exchange,
               shares,
               avgPrice,
@@ -355,11 +413,12 @@ export function PaperTradingPage() {
             const result: EnrichedHolding = {
               ticker: holding.ticker,
               companyName: holding.company_name || holding.ticker,
+              market: holding.market,
               krxExchange: holding.krx_exchange,
               shares: Number(holding.shares),
               avgPrice: Number(holding.avg_price),
               currentPrice: null,
-              marketValue: null,
+              marketValue: Number(holding.avg_price) * Number(holding.shares),
               pnlAmount: null,
               pnlPct: null,
             }
@@ -377,7 +436,7 @@ export function PaperTradingPage() {
     return () => {
       disposed = true
     }
-  }, [paperState, refreshToken])
+  }, [paperState, refreshToken, usdKrwRate])
 
   async function handleSearch() {
     if (!isCompanySearchOpen) {
@@ -393,12 +452,16 @@ export function PaperTradingPage() {
 
     setSearchLoading(true)
     setSearchError(null)
-    const localResults = searchLocalCompanies(normalizedQuery, commonKrxCompanies)
+    const localResults = market === 'krx'
+      ? searchLocalCompanies(normalizedQuery, commonCompanies)
+      : searchLocalUsStocks(normalizedQuery)
     setSearchResults(localResults)
 
     try {
-      const response = await apiClient.searchKrxStocks(normalizedQuery, 20)
-      const mergedResults = mergeSearchResults(response.results, localResults)
+      const remoteResults = market === 'krx'
+        ? (await apiClient.searchKrxStocks(normalizedQuery, 20)).results
+        : (await apiClient.searchUsStocks(normalizedQuery, 20)).results.map(usStockToCompany)
+      const mergedResults = mergeSearchResults(remoteResults, localResults)
       setSearchResults(mergedResults)
       if (mergedResults.length === 0) {
         setSearchError('검색 결과가 없습니다.')
@@ -412,7 +475,7 @@ export function PaperTradingPage() {
       } else if (caughtError instanceof Error) {
         setSearchError(caughtError.message)
       } else {
-        setSearchError('국내 종목 검색에 실패했습니다.')
+        setSearchError(`${market === 'krx' ? '국내' : '미국'} 종목 검색에 실패했습니다.`)
       }
     } finally {
       setSearchLoading(false)
@@ -466,6 +529,7 @@ export function PaperTradingPage() {
       await apiClient.paperTradingOrder(session.sessionToken, {
         ticker: quote.ticker,
         company_name: quote.company_name || quote.ticker,
+        market,
         krx_exchange: quote.krx_exchange,
         side: orderSide,
         shares,
@@ -491,11 +555,15 @@ export function PaperTradingPage() {
   const totalAssets = cashKrw + holdingsValue
   const totalPnl = totalAssets - seedCashKrw
   const totalReturnPct = seedCashKrw > 0 ? (totalPnl / seedCashKrw) * 100 : 0
-  const ownedShares = paperState?.holdings.find((item) => item.ticker === selectedCompany.ticker)?.shares ?? 0
-  const maxBuyableShares =
-    quote && quote.close > 0 ? Math.floor(cashKrw / Number(quote.close)) : 0
+  const ownedShares = paperState?.holdings.find(
+    (item) => item.market === market && item.ticker === selectedCompany.ticker,
+  )?.shares ?? 0
+  const quotePriceKrw = quote
+    ? Number(quote.close) * (market === 'us' ? Number(usdKrwRate ?? 0) : 1)
+    : 0
+  const maxBuyableShares = quotePriceKrw > 0 ? Math.floor(cashKrw / quotePriceKrw) : 0
   const normalizedShares = Number(orderShares || '0')
-  const orderValue = quote ? normalizedShares * Number(quote.close) : 0
+  const orderValue = normalizedShares * quotePriceKrw
   const hasInsufficientCash =
     orderSide === 'buy' && normalizedShares > 0 && normalizedShares > maxBuyableShares
   const hasInsufficientShares =
@@ -508,6 +576,10 @@ export function PaperTradingPage() {
       : hasInsufficientShares
         ? '보유 수량이 부족합니다. 현재 보유 주식을 확인하세요.'
         : null
+  const exchangeRateUnavailable = market === 'us' && !usdKrwRate
+  const finalOrderBlockedReason = exchangeRateUnavailable
+    ? '원/달러 환율을 불러오는 중입니다. 잠시 후 다시 시도하세요.'
+    : orderBlockedReason
   const isTossLinked = session?.identitySource === 'toss_user' || session?.accountId.startsWith('paper-toss-')
   const accountSuffix = session?.accountId.slice(-6).toUpperCase() ?? '------'
 
@@ -630,10 +702,27 @@ export function PaperTradingPage() {
           </div>
         </div>
 
+        <div className="segmented-control segmented-control--full" role="tablist" aria-label="주문 시장 선택">
+          <button
+            type="button"
+            className={market === 'krx' ? 'segmented-control__button segmented-control__button--active' : 'segmented-control__button'}
+            onClick={() => handleMarketChange('krx')}
+          >
+            국내주식
+          </button>
+          <button
+            type="button"
+            className={market === 'us' ? 'segmented-control__button segmented-control__button--active' : 'segmented-control__button'}
+            onClick={() => handleMarketChange('us')}
+          >
+            미국주식
+          </button>
+        </div>
+
         <p id="paper-company-search-help" className="helper-text helper-text--tight">
           {searchResults.length > 0
             ? '검색 결과에서 종목을 선택하세요.'
-            : `${selectedCompany.name} 선택됨 · 회사명이나 종목코드로 바꿀 수 있습니다.`}
+            : `${selectedCompany.name} 선택됨 · ${market === 'krx' ? '회사명이나 종목코드' : '회사명이나 티커'}로 바꿀 수 있습니다.`}
         </p>
 
         <div className="paper-company-search">
@@ -648,7 +737,7 @@ export function PaperTradingPage() {
                   void handleSearch()
                 }
               }}
-              placeholder="회사명이나 6자리 종목코드"
+              placeholder={market === 'krx' ? '회사명이나 6자리 종목코드' : '회사명이나 티커 · 예: NVIDIA'}
               aria-describedby="paper-company-search-help"
               aria-controls="paper-company-search-results"
               aria-expanded={isCompanySearchOpen && searchResults.length > 0}
@@ -701,14 +790,17 @@ export function PaperTradingPage() {
                 {quote.company_name ? `${quote.company_name} (${quote.ticker})` : quote.ticker}
               </strong>
               <p className="paper-quote-card__meta">
-                거래소 {quote.krx_exchange.toUpperCase()} / 기준일 {formatDate(quote.as_of)}
+                {market === 'krx' ? `거래소 ${quote.krx_exchange.toUpperCase()}` : '미국시장 · USD'} / 기준일 {formatDate(quote.as_of)}
               </p>
             </div>
             <div className="paper-quote-card__price">
-              <strong>{formatKrw(quote.close)}</strong>
+              <strong>{formatMarketPrice(quote.close, market)}</strong>
               <span>
-                전일 대비 {formatKrw(quote.change_amount)} / {formatPct(quote.change_pct)}
+                전일 대비 {formatMarketPrice(quote.change_amount, market)} / {formatPct(quote.change_pct)}
               </span>
+              {market === 'us' && usdKrwRate ? (
+                <span>원화 환산 {formatKrw(quotePriceKrw)} · 환율 {formatKrw(usdKrwRate)}/달러</span>
+              ) : null}
             </div>
           </div>
         ) : null}
@@ -771,13 +863,13 @@ export function PaperTradingPage() {
           </span>
         </div>
 
-        {orderBlockedReason ? <div className="state-box state-box--warning">{orderBlockedReason}</div> : null}
+        {finalOrderBlockedReason ? <div className="state-box state-box--warning">{finalOrderBlockedReason}</div> : null}
 
         <button
           type="button"
           className="primary-action"
           onClick={() => void handleSubmitOrder()}
-          disabled={submittingOrder || !quote || Boolean(orderBlockedReason)}
+          disabled={submittingOrder || !quote || Boolean(finalOrderBlockedReason)}
         >
           {submittingOrder
             ? '주문 반영 중...'
@@ -787,7 +879,8 @@ export function PaperTradingPage() {
         <div className="content-panel content-panel--nested">
           <p className="content-panel__eyebrow">사용 안내</p>
           <ul className="bullet-list">
-            <li>국내주식의 최근 종가를 사용합니다.</li>
+            <li>국내·미국주식의 최근 시세를 사용합니다.</li>
+            <li>미국주식은 현재 원/달러 환율로 환산해 원화 예수금에 반영합니다.</li>
             <li>수수료·세금·슬리피지는 제외됩니다.</li>
             <li>{isTossLinked ? '거래 기록은 토스 사용자 계정에 연결됩니다.' : '현재 거래 기록은 이 기기에 저장됩니다.'}</li>
           </ul>
@@ -807,19 +900,19 @@ export function PaperTradingPage() {
               .slice()
               .sort((left, right) => Number(right.marketValue ?? 0) - Number(left.marketValue ?? 0))
               .map((holding) => (
-                <article key={`${holding.ticker}-${holding.krxExchange}`} className="portfolio-item">
+                <article key={`${holding.market}-${holding.ticker}-${holding.krxExchange}`} className="portfolio-item">
                   <div className="portfolio-item__top">
                     <div>
                       <h4 className="portfolio-item__title">{holding.companyName}</h4>
                       <p className="portfolio-item__meta">
-                        {holding.ticker} / {holding.krxExchange.toUpperCase()} / {holding.shares}주
+                        {holding.ticker} / {holding.market === 'krx' ? holding.krxExchange.toUpperCase() : '미국주식'} / {holding.shares}주
                       </p>
                     </div>
                     <strong className="portfolio-item__value">{formatKrw(holding.marketValue)}</strong>
                   </div>
                   <div className="portfolio-item__stats">
                     <span>평균단가 {formatKrw(holding.avgPrice)}</span>
-                    <span>현재가 {formatKrw(holding.currentPrice)}</span>
+                    <span>현재가 {formatMarketPrice(holding.currentPrice, holding.market)}</span>
                     <span>손익 {formatKrw(holding.pnlAmount)}</span>
                     <span>수익률 {formatPct(holding.pnlPct)}</span>
                     <span>기준일 {formatDate(holding.asOf)}</span>
@@ -846,10 +939,12 @@ export function PaperTradingPage() {
                   </span>
                 </div>
                 <p className="trade-item__meta">
-                  {trade.ticker} / {trade.krx_exchange.toUpperCase()} / {trade.shares}주
+                  {trade.ticker} / {trade.market === 'krx' ? trade.krx_exchange.toUpperCase() : '미국주식'} / {trade.shares}주
                 </p>
                 <p className="trade-item__meta">
-                  단가 {formatKrw(trade.price)} / 거래금액 {formatKrw(trade.amount_krw)}
+                  단가 {trade.market === 'us' && trade.native_price
+                    ? `${formatMarketPrice(trade.native_price, 'us')} (${formatKrw(trade.price)})`
+                    : formatKrw(trade.price)} / 거래금액 {formatKrw(trade.amount_krw)}
                 </p>
                 <p className="trade-item__meta">{formatTradeTime(trade.traded_at)}</p>
               </article>

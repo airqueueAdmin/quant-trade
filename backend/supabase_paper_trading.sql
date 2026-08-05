@@ -9,11 +9,12 @@ create table if not exists public.paper_trading_positions (
     account_id text not null references public.paper_trading_accounts(account_id) on delete cascade,
     ticker text not null,
     company_name text,
+    market text not null default 'krx' check (market in ('krx', 'us')),
     krx_exchange text not null default 'auto',
     shares integer not null check (shares >= 0),
     avg_price numeric(18, 2) not null default 0,
     updated_at timestamptz not null default timezone('utc', now()),
-    primary key (account_id, ticker)
+    primary key (account_id, market, ticker)
 );
 
 create table if not exists public.paper_trading_trades (
@@ -22,8 +23,11 @@ create table if not exists public.paper_trading_trades (
     side text not null check (side in ('buy', 'sell')),
     ticker text not null,
     company_name text,
+    market text not null default 'krx' check (market in ('krx', 'us')),
     krx_exchange text not null default 'auto',
     price numeric(18, 2) not null check (price > 0),
+    native_price numeric(18, 4) not null check (native_price > 0),
+    usdkrw_rate numeric(18, 4) not null check (usdkrw_rate > 0),
     shares integer not null check (shares > 0),
     amount_krw numeric(18, 2) not null check (amount_krw > 0),
     traded_at timestamptz not null default timezone('utc', now())
@@ -129,13 +133,18 @@ begin
 end;
 $$;
 
+drop function if exists public.execute_paper_trade(text, text, text, text, text, numeric, integer);
+
 create or replace function public.execute_paper_trade(
     p_account_id text,
     p_ticker text,
     p_company_name text,
+    p_market text,
     p_krx_exchange text,
     p_side text,
     p_price numeric,
+    p_native_price numeric,
+    p_usdkrw_rate numeric,
     p_shares integer
 )
 returns json
@@ -152,11 +161,14 @@ declare
     v_new_shares integer;
     v_new_avg_price numeric(18, 2);
 begin
+    if p_market not in ('krx', 'us') then
+        raise exception 'invalid market';
+    end if;
     if p_side not in ('buy', 'sell') then
         raise exception 'invalid side';
     end if;
-    if p_price <= 0 or p_shares <= 0 then
-        raise exception 'price and shares must be positive';
+    if p_price <= 0 or p_native_price <= 0 or p_usdkrw_rate <= 0 or p_shares <= 0 then
+        raise exception 'price, exchange rate, and shares must be positive';
     end if;
 
     insert into public.paper_trading_accounts (account_id, cash_krw, seed_cash_krw, updated_at)
@@ -180,6 +192,7 @@ begin
           into v_existing_shares, v_existing_avg_price
           from public.paper_trading_positions
          where account_id = p_account_id
+           and market = p_market
            and ticker = p_ticker
          for update;
 
@@ -189,12 +202,12 @@ begin
         v_new_avg_price := round(((v_existing_avg_price * v_existing_shares) + v_amount) / v_new_shares, 2);
 
         insert into public.paper_trading_positions (
-            account_id, ticker, company_name, krx_exchange, shares, avg_price, updated_at
+            account_id, ticker, company_name, market, krx_exchange, shares, avg_price, updated_at
         )
         values (
-            p_account_id, p_ticker, p_company_name, p_krx_exchange, v_new_shares, v_new_avg_price, timezone('utc', now())
+            p_account_id, p_ticker, p_company_name, p_market, p_krx_exchange, v_new_shares, v_new_avg_price, timezone('utc', now())
         )
-        on conflict (account_id, ticker)
+        on conflict (account_id, market, ticker)
         do update set
             company_name = excluded.company_name,
             krx_exchange = excluded.krx_exchange,
@@ -211,6 +224,7 @@ begin
           into v_existing_shares, v_existing_avg_price
           from public.paper_trading_positions
          where account_id = p_account_id
+           and market = p_market
            and ticker = p_ticker
          for update;
 
@@ -223,12 +237,14 @@ begin
         if v_new_shares = 0 then
             delete from public.paper_trading_positions
              where account_id = p_account_id
+               and market = p_market
                and ticker = p_ticker;
         else
             update public.paper_trading_positions
                set shares = v_new_shares,
                    updated_at = timezone('utc', now())
              where account_id = p_account_id
+               and market = p_market
                and ticker = p_ticker;
         end if;
 
@@ -239,14 +255,15 @@ begin
     end if;
 
     insert into public.paper_trading_trades (
-        account_id, side, ticker, company_name, krx_exchange, price, shares, amount_krw
+        account_id, side, ticker, company_name, market, krx_exchange, price, native_price, usdkrw_rate, shares, amount_krw
     )
     values (
-        p_account_id, p_side, p_ticker, p_company_name, p_krx_exchange, p_price, p_shares, v_amount
+        p_account_id, p_side, p_ticker, p_company_name, p_market, p_krx_exchange, p_price, p_native_price, p_usdkrw_rate, p_shares, v_amount
     );
 
     return json_build_object(
         'account_id', p_account_id,
+        'market', p_market,
         'side', p_side,
         'ticker', p_ticker,
         'shares', p_shares,
@@ -275,9 +292,9 @@ grant usage, select on sequence public.closing_bet_alert_events_id_seq to servic
 grant usage, select on sequence public.saved_backtests_id_seq to service_role;
 
 revoke all on function public.reset_paper_trading_account(text, numeric) from public, anon, authenticated;
-revoke all on function public.execute_paper_trade(text, text, text, text, text, numeric, integer) from public, anon, authenticated;
+revoke all on function public.execute_paper_trade(text, text, text, text, text, text, numeric, numeric, numeric, integer) from public, anon, authenticated;
 grant execute on function public.reset_paper_trading_account(text, numeric) to service_role;
-grant execute on function public.execute_paper_trade(text, text, text, text, text, numeric, integer) to service_role;
+grant execute on function public.execute_paper_trade(text, text, text, text, text, text, numeric, numeric, numeric, integer) to service_role;
 
 alter table public.paper_trading_accounts enable row level security;
 alter table public.paper_trading_positions enable row level security;

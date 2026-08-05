@@ -57,6 +57,16 @@ export type KRXSearchResult = {
   display_name?: string
 }
 
+export type USSearchResult = {
+  ticker: string
+  name: string
+  exchange: string
+  quote_type: 'equity' | 'etf'
+  currency: 'USD'
+  aliases?: string[]
+  display_name?: string
+}
+
 export type QuoteSnapshot = {
   ticker: string
   resolved_ticker: string
@@ -70,6 +80,10 @@ export type QuoteSnapshot = {
   change_pct: number
   market_status?: string | null
   source?: 'naver_finance_realtime' | 'yfinance_daily' | string
+  currency?: 'KRW' | 'USD'
+  native_price?: number
+  price_krw?: number
+  usdkrw_rate?: number
 }
 
 export type StockHistoryRow = {
@@ -174,6 +188,7 @@ export type SectorSnapshot = {
 export type PaperTradingHolding = {
   ticker: string
   company_name?: string | null
+  market: Market
   krx_exchange: KrxExchange
   shares: number
   avg_price: number
@@ -185,8 +200,11 @@ export type PaperTradingTrade = {
   side: 'buy' | 'sell'
   ticker: string
   company_name?: string | null
+  market: Market
   krx_exchange: KrxExchange
   price: number
+  native_price?: number | null
+  usdkrw_rate?: number | null
   shares: number
   amount_krw: number
   traded_at: string
@@ -239,6 +257,7 @@ export type PaperTradingRankingResponse = {
 export type PaperTradingOrderRequest = {
   ticker: string
   company_name?: string
+  market: Market
   krx_exchange?: KrxExchange
   side: 'buy' | 'sell'
   shares: number

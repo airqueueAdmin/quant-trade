@@ -26,6 +26,7 @@ import type {
   StockHistoryRow,
   SentimentResult,
   TossLoginUserKeyResponse,
+  USSearchResult,
 } from './types'
 
 export const apiClient = {
@@ -70,6 +71,13 @@ export const apiClient = {
 
   searchKrxStocks(query: string, limit = 20, signal?: AbortSignal) {
     return apiRequest<{ query: string; results: KRXSearchResult[] }>('/stocks/krx/search', {
+      params: { q: query, limit },
+      signal,
+    })
+  },
+
+  searchUsStocks(query: string, limit = 20, signal?: AbortSignal) {
+    return apiRequest<{ query: string; results: USSearchResult[] }>('/stocks/us/search', {
       params: { q: query, limit },
       signal,
     })

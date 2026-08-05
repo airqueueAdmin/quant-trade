@@ -20,6 +20,7 @@ import type {
   RSIOptimizationRequest,
   StrategyMetric,
 } from '../../shared/api/types'
+import { POPULAR_US_STOCKS, usStockToCompany } from '../../shared/stocks/usStocks'
 
 type StrategyKey = 'moving_average' | 'rsi' | 'bollinger_bands'
 type SimulationMode = 'backtest' | 'optimize'
@@ -227,7 +228,6 @@ export function StrategySimulationPage() {
   const requestedExchange = searchParams.get('krx_exchange')
   const initialKrxExchange: KrxExchange =
     requestedExchange === 'kospi' || requestedExchange === 'kosdaq' ? requestedExchange : 'auto'
-  const commonKrxCompanies = useMemo(() => COMMON_KRX_COMPANIES, [])
   const dateRange = useMemo(() => defaultDateRange(), [])
 
   const [market, setMarket] = useState<Market>(initialMarket)
@@ -235,7 +235,8 @@ export function StrategySimulationPage() {
   const [strategy, setStrategy] = useState<StrategyKey>('moving_average')
   const [ticker, setTicker] = useState(initialTicker)
   const [selectedQuickTicker, setSelectedQuickTicker] = useState<string | null>(
-    initialMarket === 'krx' && COMMON_KRX_COMPANIES.some((company) => company.ticker === initialTicker)
+    (initialMarket === 'krx' ? COMMON_KRX_COMPANIES : POPULAR_US_STOCKS)
+      .some((company) => company.ticker === initialTicker)
       ? initialTicker
       : null,
   )
@@ -283,6 +284,10 @@ export function StrategySimulationPage() {
   const [backtestResult, setBacktestResult] = useState<BacktestResult | null>(null)
   const [optimizationResult, setOptimizationResult] = useState<OptimizationResult | null>(null)
   const [currentStep, setCurrentStep] = useState(0)
+  const commonCompanies = useMemo(
+    () => market === 'krx' ? COMMON_KRX_COMPANIES : POPULAR_US_STOCKS.map(usStockToCompany),
+    [market],
+  )
 
   function resetResults() {
     setError(null)
@@ -293,7 +298,7 @@ export function StrategySimulationPage() {
   function handleMarketChange(nextMarket: Market) {
     setMarket(nextMarket)
     setTicker(defaultTicker(nextMarket))
-    setSelectedQuickTicker(nextMarket === 'krx' ? defaultTicker(nextMarket) : null)
+    setSelectedQuickTicker(defaultTicker(nextMarket))
     setInitialCapital(defaultInitialCapital(nextMarket))
     setFixedAmount(defaultFixedAmount(nextMarket))
     setKrxExchange('auto')
@@ -332,9 +337,11 @@ export function StrategySimulationPage() {
     setSearchError(null)
 
     try {
-      const response = await apiClient.searchKrxStocks(normalizedQuery, 20)
-      setSearchResults(response.results)
-      if (response.results.length === 0) {
+      const nextResults = market === 'krx'
+        ? (await apiClient.searchKrxStocks(normalizedQuery, 20)).results
+        : (await apiClient.searchUsStocks(normalizedQuery, 20)).results.map(usStockToCompany)
+      setSearchResults(nextResults)
+      if (nextResults.length === 0) {
         setSearchError('검색 결과가 없습니다.')
       }
     } catch (caughtError) {
@@ -343,7 +350,7 @@ export function StrategySimulationPage() {
       } else if (caughtError instanceof Error) {
         setSearchError(caughtError.message)
       } else {
-        setSearchError('국내 종목 검색에 실패했습니다.')
+        setSearchError(`${market === 'krx' ? '국내' : '미국'} 종목 검색에 실패했습니다.`)
       }
       setSearchResults([])
     } finally {
@@ -671,12 +678,12 @@ export function StrategySimulationPage() {
 
         {currentStep === 0 || currentStep === 2 ? (
         <div className="form-stack">
-          {currentStep === 0 && market === 'krx' ? (
+          {currentStep === 0 ? (
             <>
               <div>
                 <label className="field-label">대표 종목 빠른 선택</label>
                 <div className="chip-row">
-                  {commonKrxCompanies.map((company) => (
+                  {commonCompanies.map((company) => (
                     <button
                       key={company.ticker}
                       type="button"
@@ -699,7 +706,7 @@ export function StrategySimulationPage() {
               </div>
 
               <div className="field-grid">
-                <div>
+                {market === 'krx' ? <div>
                   <label className="field-label" htmlFor="simulation-krx-exchange">
                     국내 거래소
                   </label>
@@ -715,15 +722,15 @@ export function StrategySimulationPage() {
                       </option>
                     ))}
                   </select>
-                </div>
+                </div> : null}
 
                 <div>
-                  <label className="field-label" htmlFor="simulation-krx-search">
-                    국내 종목명 검색
+                  <label className="field-label" htmlFor="simulation-stock-search">
+                    {market === 'krx' ? '국내 종목명 검색' : '미국 회사명·티커 검색'}
                   </label>
                   <div className="input-action-row">
                     <input
-                      id="simulation-krx-search"
+                      id="simulation-stock-search"
                       className="text-field"
                       value={searchQuery}
                       onChange={(event) => setSearchQuery(event.target.value)}
@@ -732,7 +739,7 @@ export function StrategySimulationPage() {
                           void handleSearch()
                         }
                       }}
-                      placeholder="회사명이나 6자리 종목코드"
+                      placeholder={market === 'krx' ? '회사명이나 6자리 종목코드' : '예: NVIDIA 또는 NVDA'}
                       disabled={Boolean(selectedQuickTicker)}
                     />
                     <button

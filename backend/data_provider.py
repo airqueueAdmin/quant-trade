@@ -34,6 +34,27 @@ DEFAULT_REQUEST_HEADERS = {
 KRX_LISTING_DOWNLOAD_ATTEMPTS = 3
 _KRX_LISTING_MEMORY: pd.DataFrame | None = None
 _KRX_LISTING_LOCK = Lock()
+US_EXCHANGES = {"NMS", "NYQ", "ASE", "NGM", "NCM", "BTS", "PCX"}
+POPULAR_US_STOCKS = (
+    {"ticker": "AAPL", "name": "Apple Inc.", "exchange": "NASDAQ", "aliases": ["애플"]},
+    {"ticker": "MSFT", "name": "Microsoft Corporation", "exchange": "NASDAQ", "aliases": ["마이크로소프트"]},
+    {"ticker": "NVDA", "name": "NVIDIA Corporation", "exchange": "NASDAQ", "aliases": ["엔비디아"]},
+    {"ticker": "AMZN", "name": "Amazon.com, Inc.", "exchange": "NASDAQ", "aliases": ["아마존"]},
+    {"ticker": "GOOGL", "name": "Alphabet Inc.", "exchange": "NASDAQ", "aliases": ["알파벳", "구글"]},
+    {"ticker": "META", "name": "Meta Platforms, Inc.", "exchange": "NASDAQ", "aliases": ["메타"]},
+    {"ticker": "TSLA", "name": "Tesla, Inc.", "exchange": "NASDAQ", "aliases": ["테슬라"]},
+    {"ticker": "AVGO", "name": "Broadcom Inc.", "exchange": "NASDAQ"},
+    {"ticker": "AMD", "name": "Advanced Micro Devices, Inc.", "exchange": "NASDAQ"},
+    {"ticker": "NFLX", "name": "Netflix, Inc.", "exchange": "NASDAQ", "aliases": ["넷플릭스"]},
+    {"ticker": "BRK-B", "name": "Berkshire Hathaway Inc.", "exchange": "NYSE"},
+    {"ticker": "JPM", "name": "JPMorgan Chase & Co.", "exchange": "NYSE"},
+    {"ticker": "V", "name": "Visa Inc.", "exchange": "NYSE"},
+    {"ticker": "LLY", "name": "Eli Lilly and Company", "exchange": "NYSE"},
+    {"ticker": "WMT", "name": "Walmart Inc.", "exchange": "NYSE"},
+    {"ticker": "XOM", "name": "Exxon Mobil Corporation", "exchange": "NYSE"},
+    {"ticker": "COST", "name": "Costco Wholesale Corporation", "exchange": "NASDAQ"},
+    {"ticker": "PLTR", "name": "Palantir Technologies Inc.", "exchange": "NASDAQ"},
+)
 
 
 class MarketDataProviderError(RuntimeError):
@@ -218,6 +239,83 @@ def search_krx_stocks(query: str, limit: int = 20) -> list[dict[str, str]]:
         }
         for _, row in ranked.iterrows()
     ]
+
+
+def _normalize_us_search_result(raw_result: dict[str, Any]) -> dict[str, str] | None:
+    ticker = normalize_ticker_input(str(raw_result.get("symbol") or raw_result.get("ticker") or ""))
+    name = str(
+        raw_result.get("longname")
+        or raw_result.get("shortname")
+        or raw_result.get("name")
+        or ticker
+    ).strip()
+    exchange_code = str(raw_result.get("exchange") or "").strip().upper()
+    exchange_name = str(raw_result.get("exchDisp") or raw_result.get("exchange_name") or exchange_code or "US").strip()
+    quote_type = str(raw_result.get("quoteType") or raw_result.get("quote_type") or "EQUITY").strip().upper()
+
+    if not ticker or not re.fullmatch(r"[A-Z0-9.-]{1,16}", ticker):
+        return None
+    if exchange_code and exchange_code not in US_EXCHANGES and exchange_name.upper() not in {"NASDAQ", "NYSE", "NYSE ARCA"}:
+        return None
+    if quote_type not in {"EQUITY", "ETF"}:
+        return None
+
+    return {
+        "ticker": ticker,
+        "name": name,
+        "exchange": exchange_name or "US",
+        "quote_type": quote_type.lower(),
+        "currency": "USD",
+        "display_name": f"{name} ({ticker}, {exchange_name or 'US'})",
+    }
+
+
+def _search_popular_us_stocks(query: str) -> list[dict[str, str]]:
+    normalized_query = query.strip().lower()
+    ranked: list[tuple[int, dict[str, str]]] = []
+    for item in POPULAR_US_STOCKS:
+        ticker = item["ticker"].lower()
+        name = item["name"].lower()
+        aliases = [str(alias).lower() for alias in item.get("aliases", [])]
+        if normalized_query not in ticker and normalized_query not in name and not any(normalized_query in alias for alias in aliases):
+            continue
+        rank = 1 if ticker.startswith(normalized_query) else 2 if name.startswith(normalized_query) else 3
+        normalized = _normalize_us_search_result(item)
+        if normalized:
+            ranked.append((rank, normalized))
+    return [item for _, item in sorted(ranked, key=lambda value: (value[0], value[1]["ticker"]))]
+
+
+def search_us_stocks(query: str, limit: int = 20) -> list[dict[str, str]]:
+    """Search US-listed equities and ETFs, with a local popular-symbol fallback."""
+    normalized_query = str(query).strip()
+    if not normalized_query:
+        return []
+
+    bounded_limit = max(1, min(int(limit), 50))
+    results: list[dict[str, str]] = []
+    try:
+        search = yf.Search(
+            normalized_query,
+            max_results=bounded_limit,
+            news_count=0,
+            lists_count=0,
+            recommended=0,
+            enable_fuzzy_query=False,
+        )
+        for raw_result in search.quotes:
+            normalized = _normalize_us_search_result(raw_result)
+            if normalized:
+                results.append(normalized)
+    except Exception:
+        # Symbol search is an enhancement; popular stocks should stay searchable
+        # even if Yahoo temporarily throttles or changes the search response.
+        pass
+
+    merged: dict[str, dict[str, str]] = {}
+    for item in [*results, *_search_popular_us_stocks(normalized_query)]:
+        merged.setdefault(item["ticker"], item)
+    return list(merged.values())[:bounded_limit]
 
 
 def get_krx_stock_by_ticker(ticker: str) -> dict[str, str] | None:

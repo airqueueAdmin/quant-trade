@@ -8,6 +8,7 @@ import { ApiError } from '../../shared/api/http'
 import type { KrxExchange, KRXSearchResult, Market, SentimentResult } from '../../shared/api/types'
 import { useFullScreenAd } from '../../shared/ads/useFullScreenAd'
 import { env } from '../../shared/config/env'
+import { POPULAR_US_STOCKS, usStockToCompany } from '../../shared/stocks/usStocks'
 import { useWatchlist } from '../../shared/watchlist/useWatchlist'
 
 const MARKET_OPTIONS: Array<{ value: Market; label: string }> = [
@@ -118,7 +119,8 @@ export function AnalysisPage() {
   const [krxExchange, setKrxExchange] = useState<KrxExchange>(initialKrxExchange)
   const [ticker, setTicker] = useState(initialTicker)
   const [selectedQuickTicker, setSelectedQuickTicker] = useState<string | null>(
-    initialMarket === 'krx' && COMMON_KRX_COMPANIES.some((company) => company.ticker === initialTicker)
+    (initialMarket === 'krx' ? COMMON_KRX_COMPANIES : POPULAR_US_STOCKS)
+      .some((company) => company.ticker === initialTicker)
       ? initialTicker
       : null,
   )
@@ -131,12 +133,15 @@ export function AnalysisPage() {
   const [result, setResult] = useState<SentimentResult | null>(null)
   const [currentStep, setCurrentStep] = useState(0)
 
-  const commonKrxCompanies = useMemo(() => COMMON_KRX_COMPANIES, [])
+  const commonCompanies = useMemo(
+    () => market === 'krx' ? COMMON_KRX_COMPANIES : POPULAR_US_STOCKS.map(usStockToCompany),
+    [market],
+  )
 
   function handleMarketChange(nextMarket: Market) {
     setMarket(nextMarket)
     setTicker(defaultTicker(nextMarket))
-    setSelectedQuickTicker(nextMarket === 'krx' ? defaultTicker(nextMarket) : null)
+    setSelectedQuickTicker(defaultTicker(nextMarket))
     setKrxExchange('auto')
     setSearchQuery('')
     setSearchError(null)
@@ -157,9 +162,11 @@ export function AnalysisPage() {
     setSearchError(null)
 
     try {
-      const response = await apiClient.searchKrxStocks(normalizedQuery, 20)
-      setSearchResults(response.results)
-      if (response.results.length === 0) {
+      const nextResults = market === 'krx'
+        ? (await apiClient.searchKrxStocks(normalizedQuery, 20)).results
+        : (await apiClient.searchUsStocks(normalizedQuery, 20)).results.map(usStockToCompany)
+      setSearchResults(nextResults)
+      if (nextResults.length === 0) {
         setSearchError('검색 결과가 없습니다.')
       }
     } catch (caughtError) {
@@ -168,7 +175,7 @@ export function AnalysisPage() {
       } else if (caughtError instanceof Error) {
         setSearchError(caughtError.message)
       } else {
-        setSearchError('국내 종목 검색에 실패했습니다.')
+        setSearchError(`${market === 'krx' ? '국내' : '미국'} 종목 검색에 실패했습니다.`)
       }
       setSearchResults([])
     } finally {
@@ -292,12 +299,11 @@ export function AnalysisPage() {
               </div>
             ) : null}
 
-            {market === 'krx' ? (
-              <>
+            <>
                 <div>
                   <label className="field-label">대표 종목 빠른 선택</label>
                   <div className="chip-row">
-                    {commonKrxCompanies.map((company) => (
+                    {commonCompanies.map((company) => (
                       <button
                         key={company.ticker}
                         type="button"
@@ -320,7 +326,7 @@ export function AnalysisPage() {
                 </div>
 
                 <div className="field-grid">
-                  <div>
+                  {market === 'krx' ? <div>
                     <label className="field-label" htmlFor="krx-exchange">국내 거래소</label>
                     <select
                       id="krx-exchange"
@@ -332,16 +338,18 @@ export function AnalysisPage() {
                         <option key={option.value} value={option.value}>{option.label}</option>
                       ))}
                     </select>
-                  </div>
+                  </div> : null}
                   <div>
-                    <label className="field-label" htmlFor="krx-search">국내 종목명 검색</label>
+                    <label className="field-label" htmlFor="stock-search">
+                      {market === 'krx' ? '국내 종목명 검색' : '미국 회사명·티커 검색'}
+                    </label>
                     <div className="input-action-row">
                       <input
-                        id="krx-search"
+                        id="stock-search"
                         className="text-field"
                         value={searchQuery}
                         onChange={(event) => setSearchQuery(event.target.value)}
-                        placeholder="회사명이나 6자리 종목코드"
+                        placeholder={market === 'krx' ? '회사명이나 6자리 종목코드' : '예: NVIDIA 또는 NVDA'}
                         disabled={Boolean(selectedQuickTicker)}
                       />
                       <button
@@ -372,7 +380,6 @@ export function AnalysisPage() {
                   </div>
                 ) : null}
               </>
-            ) : null}
 
             <div>
               <label className="field-label" htmlFor="ticker-input">

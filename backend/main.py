@@ -31,6 +31,7 @@ from data_provider import (
     get_stock_data,
     get_symbol_profile,
     search_krx_stocks,
+    search_us_stocks,
     normalize_krx_exchange,
     normalize_market,
     normalize_ticker_input,
@@ -527,6 +528,7 @@ class SavedBacktestRequest(PaperTradingAccountRequest):
 
 class PaperTradingOrderRequest(PaperTradingAccountRequest):
     ticker: str = Field(min_length=1, max_length=32)
+    market: str = Field(default="krx")
     krx_exchange: str = Field(default="auto")
     side: str = Field(min_length=2, max_length=4)
     shares: int = Field(ge=1, le=1_000_000)
@@ -536,6 +538,11 @@ class PaperTradingOrderRequest(PaperTradingAccountRequest):
     @classmethod
     def normalize_ticker(cls, value: str) -> str:
         return normalize_ticker_input(value)
+
+    @field_validator("market")
+    @classmethod
+    def validate_market(cls, value: str) -> str:
+        return normalize_market(value)
 
     @field_validator("krx_exchange")
     @classmethod
@@ -1045,7 +1052,7 @@ def get_paper_trading_state(account_id: str) -> dict[str, Any]:
         "/rest/v1/paper_trading_positions",
         params={
             "account_id": f"eq.{account_id}",
-            "select": "ticker,company_name,krx_exchange,shares,avg_price,updated_at",
+            "select": "ticker,company_name,market,krx_exchange,shares,avg_price,updated_at",
             "order": "updated_at.desc",
         },
     ) or []
@@ -1054,7 +1061,7 @@ def get_paper_trading_state(account_id: str) -> dict[str, Any]:
         "/rest/v1/paper_trading_trades",
         params={
             "account_id": f"eq.{account_id}",
-            "select": "id,side,ticker,company_name,krx_exchange,price,shares,amount_krw,traded_at",
+            "select": "id,side,ticker,company_name,market,krx_exchange,price,native_price,usdkrw_rate,shares,amount_krw,traded_at",
             "order": "traded_at.desc",
             "limit": 200,
         },
@@ -1073,15 +1080,30 @@ def get_paper_trading_state(account_id: str) -> dict[str, Any]:
 
 
 def execute_paper_trade(request: PaperTradingOrderRequest) -> dict[str, Any]:
-    quote = create_quote_snapshot(request.ticker, market="krx", krx_exchange=request.krx_exchange)
+    quote = create_quote_snapshot(request.ticker, market=request.market, krx_exchange=request.krx_exchange)
+    fx_snapshot = get_usdkrw_snapshot() if request.market == "us" else {"rate": 1.0}
+    usdkrw_rate = float(fx_snapshot["rate"])
+    native_price = float(quote["close"])
+    price_krw = native_price * usdkrw_rate
+    quote.update(
+        {
+            "currency": "USD" if request.market == "us" else "KRW",
+            "native_price": native_price,
+            "price_krw": price_krw,
+            "usdkrw_rate": usdkrw_rate,
+        }
+    )
     company_name = request.company_name or quote.get("company_name") or request.ticker
     payload = {
         "p_account_id": request.account_id,
         "p_ticker": request.ticker,
         "p_company_name": company_name,
+        "p_market": request.market,
         "p_krx_exchange": request.krx_exchange,
         "p_side": request.side,
-        "p_price": float(quote["close"]),
+        "p_price": price_krw,
+        "p_native_price": native_price,
+        "p_usdkrw_rate": usdkrw_rate,
         "p_shares": int(request.shares),
     }
     result = call_supabase(
@@ -1141,7 +1163,7 @@ def build_paper_ranking_profile(account_id: str) -> dict[str, str]:
 def build_paper_trading_leaderboard(
     accounts: list[dict[str, Any]],
     positions: list[dict[str, Any]],
-    quote_prices: dict[tuple[str, str], dict[str, Any]],
+    quote_prices: dict[tuple[str, ...], dict[str, Any]],
     current_account_id: str,
     *,
     sort_by: str = "return",
@@ -1172,12 +1194,18 @@ def build_paper_trading_leaderboard(
 
         for position in account_positions:
             ticker = str(position.get("ticker") or "")
+            market = str(position.get("market") or "krx")
             exchange = str(position.get("krx_exchange") or "auto")
             shares = float(position.get("shares") or 0)
             average_price = float(position.get("avg_price") or 0)
-            quote = quote_prices.get((ticker, exchange)) or quote_prices.get((ticker, "auto"))
+            quote = (
+                quote_prices.get((market, ticker, exchange))
+                or quote_prices.get((market, ticker, "auto"))
+                or quote_prices.get((ticker, exchange))
+                or quote_prices.get((ticker, "auto"))
+            )
             if quote and quote.get("close") is not None:
-                current_price = float(quote["close"])
+                current_price = float(quote.get("price_krw") or quote["close"])
             else:
                 current_price = average_price
                 missing_quote_count += 1
@@ -1278,7 +1306,7 @@ def get_paper_trading_leaderboard(
         "GET",
         "/rest/v1/paper_trading_positions",
         params={
-            "select": "account_id,ticker,company_name,krx_exchange,shares,avg_price,updated_at",
+            "select": "account_id,ticker,company_name,market,krx_exchange,shares,avg_price,updated_at",
             "limit": 5000,
         },
     ) or []
@@ -1308,19 +1336,29 @@ def get_paper_trading_leaderboard(
         if str(position.get("account_id") or "") in participant_account_ids
     ]
 
-    quote_prices: dict[tuple[str, str], dict[str, Any]] = {}
+    quote_prices: dict[tuple[str, ...], dict[str, Any]] = {}
     quote_keys = {
-        (str(position.get("ticker") or ""), str(position.get("krx_exchange") or "auto"))
+        (
+            str(position.get("market") or "krx"),
+            str(position.get("ticker") or ""),
+            str(position.get("krx_exchange") or "auto"),
+        )
         for position in positions
         if position.get("ticker")
     }
-    for ticker, exchange in quote_keys:
+    usdkrw_rate: float | None = None
+    for market, ticker, exchange in quote_keys:
         try:
-            quote_prices[(ticker, exchange)] = create_quote_snapshot(
+            quote = create_quote_snapshot(
                 ticker,
-                market="krx",
+                market=market,
                 krx_exchange=exchange,
             )
+            if market == "us":
+                if usdkrw_rate is None:
+                    usdkrw_rate = float(get_usdkrw_snapshot()["rate"])
+                quote["price_krw"] = float(quote["close"]) * usdkrw_rate
+            quote_prices[(market, ticker, exchange)] = quote
         except Exception:
             logger.warning("Paper ranking quote fallback used for %s", ticker, exc_info=True)
 
@@ -2629,7 +2667,7 @@ def build_feature_status() -> dict[str, dict[str, str | bool]]:
         "paper_trading": {
             "status": paper_status,
             "summary": (
-                "세션 기반 모의 계정으로 상태와 주문을 이어서 저장할 수 있습니다."
+                "국내·미국주식 주문과 환율 환산 평가를 세션 기반 모의 계정에 저장할 수 있습니다."
                 if is_supabase_configured()
                 else paper_reason
             ),
@@ -3278,8 +3316,17 @@ def krx_stock_search(q: str, limit: int = 20) -> dict[str, Any]:
         results = search_krx_stocks(query, limit=limit)
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"국내 종목 목록을 불러오지 못했습니다: {exc}") from exc
-
     return {"query": query, "results": results}
+
+
+@app.get("/stocks/us/search")
+def us_stock_search(q: str, limit: int = 20) -> dict[str, Any]:
+    normalized_query = q.strip()
+    if not normalized_query:
+        raise HTTPException(status_code=400, detail="검색어를 입력해 주세요.")
+    if limit < 1 or limit > 50:
+        raise HTTPException(status_code=400, detail="limit must be between 1 and 50")
+    return normalize_value({"query": normalized_query, "results": search_us_stocks(normalized_query, limit=limit)})
 
 
 @app.get("/stock/{ticker}")
@@ -3302,8 +3349,7 @@ def stock_data(
     }
 
 
-@app.get("/fx/usdkrw")
-def usdkrw_rate() -> dict[str, Any]:
+def get_usdkrw_snapshot() -> dict[str, Any]:
     data = yf.download("KRW=X", period="5d", interval="1d", auto_adjust=True, progress=False)
     if isinstance(data.columns, pd.MultiIndex):
         data.columns = data.columns.get_level_values(0)
@@ -3314,6 +3360,11 @@ def usdkrw_rate() -> dict[str, Any]:
     as_of = close_series.dropna().index[-1]
     rate = float(close_series.dropna().iloc[-1])
     return normalize_value({"rate": rate, "as_of": as_of, "source": "yfinance:KRW=X"})
+
+
+@app.get("/fx/usdkrw")
+def usdkrw_rate() -> dict[str, Any]:
+    return get_usdkrw_snapshot()
 
 
 @app.get("/market/sectors")

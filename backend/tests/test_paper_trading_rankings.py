@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 import main
 
@@ -94,6 +95,56 @@ class PaperTradingRankingTests(unittest.TestCase):
 
         self.assertEqual(first, second)
         self.assertNotIn("secret", first["nickname"])
+
+    def test_us_position_uses_krw_converted_quote(self) -> None:
+        positions = [{
+            "account_id": "paper-alpha",
+            "market": "us",
+            "ticker": "NVDA",
+            "company_name": "NVIDIA",
+            "krx_exchange": "auto",
+            "shares": 10,
+            "avg_price": 130_000,
+        }]
+        quotes = {("us", "NVDA", "auto"): {"close": 110, "price_krw": 154_000}}
+
+        result = main.build_paper_trading_leaderboard(
+            [self.accounts[0]],
+            positions,
+            quotes,
+            "paper-alpha",
+        )
+
+        self.assertEqual(result["my_entry"]["total_assets_krw"], 6_540_000)
+
+    @patch.object(main, "call_supabase", return_value={"ok": True})
+    @patch.object(main, "get_usdkrw_snapshot", return_value={"rate": 1400})
+    @patch.object(
+        main,
+        "create_quote_snapshot",
+        return_value={"close": 100, "company_name": "NVIDIA", "market": "us"},
+    )
+    def test_us_order_converts_native_price_to_krw(
+        self,
+        _quote,
+        _fx,
+        mocked_supabase,
+    ) -> None:
+        request = main.PaperTradingOrderRequest(
+            account_id="paper-alpha",
+            ticker="nvda",
+            market="us",
+            side="buy",
+            shares=2,
+        )
+
+        result = main.execute_paper_trade(request)
+        payload = mocked_supabase.call_args.kwargs["json_payload"]
+
+        self.assertEqual(payload["p_market"], "us")
+        self.assertEqual(payload["p_native_price"], 100)
+        self.assertEqual(payload["p_price"], 140_000)
+        self.assertEqual(result["quote"]["price_krw"], 140_000)
 
 
 if __name__ == "__main__":

@@ -21,6 +21,7 @@ import type {
 } from '../../shared/api/types'
 import { env } from '../../shared/config/env'
 import { clearStoredSession, readStoredSession, writeStoredSession, type AppSession } from '../../shared/session/appSession'
+import { POPULAR_US_STOCKS, usStockToCompany } from '../../shared/stocks/usStocks'
 import { useWatchlist } from '../../shared/watchlist/useWatchlist'
 
 type MarketOption = Extract<Market, 'krx' | 'us'>
@@ -571,10 +572,13 @@ export function ClosingBetPage() {
     [resolvedSector, scenario, scores, sentiment, stockRows],
   )
 
-  const commonKrxCompanies = useMemo(() => COMMON_KRX_COMPANIES, [])
+  const commonCompanies = useMemo(
+    () => market === 'krx' ? COMMON_KRX_COMPANIES : POPULAR_US_STOCKS.map(usStockToCompany),
+    [market],
+  )
   const instantSearchResults = useMemo(
-    () => searchLocalKrxCompanies(searchQuery, commonKrxCompanies),
-    [commonKrxCompanies, searchQuery],
+    () => searchLocalKrxCompanies(searchQuery, commonCompanies),
+    [commonCompanies, searchQuery],
   )
 
   function resetAnalysis() {
@@ -754,14 +758,16 @@ export function ClosingBetPage() {
 
     setSearchLoading(true)
     setSearchError(null)
-    const localResults = searchLocalKrxCompanies(normalizedQuery, commonKrxCompanies)
+    const localResults = searchLocalKrxCompanies(normalizedQuery, commonCompanies)
     if (localResults.length > 0) {
       setSearchResults(localResults)
     }
 
     try {
-      const response = await apiClient.searchKrxStocks(normalizedQuery, 20)
-      const mergedResults = mergeKrxSearchResults(response.results, localResults, 20)
+      const remoteResults = market === 'krx'
+        ? (await apiClient.searchKrxStocks(normalizedQuery, 20)).results
+        : (await apiClient.searchUsStocks(normalizedQuery, 20)).results.map(usStockToCompany)
+      const mergedResults = mergeKrxSearchResults(remoteResults, localResults, 20)
       setSearchResults(mergedResults)
       if (mergedResults.length === 0) {
         setSearchError('검색 결과가 없습니다.')
@@ -772,7 +778,7 @@ export function ClosingBetPage() {
         setSearchError(null)
       } else {
         setSearchResults([])
-        setSearchError(friendlyApiError(caughtError, '국내 종목 검색에 실패했습니다.'))
+        setSearchError(friendlyApiError(caughtError, `${market === 'krx' ? '국내' : '미국'} 종목 검색에 실패했습니다.`))
       }
     } finally {
       setSearchLoading(false)
@@ -789,7 +795,7 @@ export function ClosingBetPage() {
       return
     }
 
-    setSearchResults(searchLocalKrxCompanies(normalizedQuery, commonKrxCompanies))
+    setSearchResults(searchLocalKrxCompanies(normalizedQuery, commonCompanies))
   }
 
   function handlePickCompany(company: KRXSearchResult, isQuickPick = false) {
@@ -956,7 +962,7 @@ export function ClosingBetPage() {
   function handleMarketChange(nextMarket: MarketOption) {
     setMarket(nextMarket)
     setTicker(defaultTicker(nextMarket))
-    setSelectedQuickTicker(nextMarket === 'krx' ? defaultTicker(nextMarket) : null)
+    setSelectedQuickTicker(defaultTicker(nextMarket))
     setKrxExchange('auto')
     setSearchQuery('')
     setSearchResults([])
@@ -1033,12 +1039,12 @@ export function ClosingBetPage() {
         </div>
 
         <div className="form-stack">
-          {market === 'krx' ? (
+          {(
             <>
               <div>
-                <label className="field-label">대표 국내 종목 빠른 선택</label>
+                <label className="field-label">대표 {market === 'krx' ? '국내' : '미국'} 종목 빠른 선택</label>
                 <div className="chip-row">
-                  {commonKrxCompanies.map((company) => (
+                  {commonCompanies.map((company) => (
                     <button
                       key={company.ticker}
                       type="button"
@@ -1061,7 +1067,7 @@ export function ClosingBetPage() {
               </div>
 
               <div className="field-grid field-grid--single-when-narrow">
-                <div>
+                {market === 'krx' ? <div>
                   <label className="field-label" htmlFor="closing-bet-krx-exchange">
                     국내 거래소
                   </label>
@@ -1077,11 +1083,11 @@ export function ClosingBetPage() {
                       </option>
                     ))}
                   </select>
-                </div>
+                </div> : null}
 
                 <div>
                   <label className="field-label" htmlFor="closing-bet-search">
-                    국내 종목명 검색
+                    {market === 'krx' ? '국내 종목명 검색' : '미국 회사명·티커 검색'}
                   </label>
                   <div className="input-action-row input-action-row--stacked">
                     <input
@@ -1094,7 +1100,7 @@ export function ClosingBetPage() {
                           void handleSearch()
                         }
                       }}
-                      placeholder="회사명 일부나 6자리 종목코드"
+                      placeholder={market === 'krx' ? '회사명 일부나 6자리 종목코드' : '예: NVIDIA 또는 NVDA'}
                       disabled={Boolean(selectedQuickTicker)}
                     />
                     <button
@@ -1110,7 +1116,9 @@ export function ClosingBetPage() {
               </div>
 
               <p className="helper-text helper-text--tight helper-text--relaxed-break">
-                예: KB, KB금융, 105560처럼 일부만 입력해도 됩니다.
+                {market === 'krx'
+                  ? '예: KB, KB금융, 105560처럼 일부만 입력해도 됩니다.'
+                  : '예: NVIDIA, Tesla, NVDA처럼 회사명이나 티커로 찾을 수 있습니다.'}
               </p>
 
               {searchError ? <div className="state-box state-box--error">{searchError}</div> : null}
@@ -1133,7 +1141,7 @@ export function ClosingBetPage() {
                 </div>
               ) : null}
             </>
-          ) : null}
+          )}
 
           <div>
             <label className="field-label" htmlFor="closing-bet-ticker">

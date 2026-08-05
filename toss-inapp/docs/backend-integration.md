@@ -46,6 +46,7 @@ Covered endpoints:
 - `GET /healthz`
 - `GET /app-config`
 - `GET /stocks/krx/search`
+- `GET /stocks/us/search`
 - `GET /fx/usdkrw`
 - `GET /market/sectors`
 - `GET /quote/{ticker}`
