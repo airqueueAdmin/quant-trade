@@ -107,7 +107,7 @@ export function DailyRoutineCard() {
               ? rewards.balance > 0
                 ? '광고가 표시될 AI 분석에서 자동으로 사용돼요'
                 : '지급된 분석권을 모두 사용했어요'
-              : '5일 연속 출석하면 분석권 5개를 드려요'}
+              : '5일 연속 출석하면 AI 분석권 5개를 드려요'}
           </small>
         </span>
         <b>
@@ -116,7 +116,7 @@ export function DailyRoutineCard() {
             : `${attendanceProgress}/${ATTENDANCE_REWARD_GOAL_DAYS}일`}
         </b>
       </div>
-      <p className="daily-routine__streak-note">핵심 기능을 하루 한 번 확인하면 출석 기록이 이어져요.</p>
+      <p className="daily-routine__streak-note">하루 한 번 출석 확인하면 출석 기록이 이어져요.</p>
     </section>
   )
 }
