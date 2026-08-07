@@ -1,6 +1,10 @@
 import { Link } from 'react-router-dom'
 
 import { DAILY_ROUTINE_ITEMS, useDailyRoutine } from '../../shared/retention/dailyRoutine'
+import {
+  ATTENDANCE_REWARD_GOAL_DAYS,
+  useAdFreeAnalysisRewards,
+} from '../../shared/rewards/adFreeAnalysisRewards'
 
 function getRoutineTitle(completedCount: number, totalCount: number) {
   if (completedCount === 0) {
@@ -17,7 +21,9 @@ function getRoutineTitle(completedCount: number, totalCount: number) {
 
 export function DailyRoutineCard() {
   const routine = useDailyRoutine()
+  const rewards = useAdFreeAnalysisRewards()
   const progress = (routine.completedCount / routine.totalCount) * 100
+  const attendanceProgress = Math.min(routine.streak, ATTENDANCE_REWARD_GOAL_DAYS)
 
   return (
     <section className="daily-routine" aria-labelledby="daily-routine-title">
@@ -90,7 +96,27 @@ export function DailyRoutineCard() {
           </div>
         ))}
       </div>
-      <p className="daily-routine__streak-note">핵심 기능을 하루 한 번 확인하면 연속 기록이 이어져요.</p>
+      <div className="daily-routine__reward">
+        <span className="daily-routine__reward-icon" aria-hidden="true">AI</span>
+        <span className="daily-routine__reward-copy">
+          <strong>
+            {rewards.attendanceRewardGranted ? '광고 없는 AI 분석권' : '5일 출석 리워드'}
+          </strong>
+          <small>
+            {rewards.attendanceRewardGranted
+              ? rewards.balance > 0
+                ? '광고가 표시될 AI 분석에서 자동으로 사용돼요'
+                : '지급된 분석권을 모두 사용했어요'
+              : '5일 연속 출석하면 분석권 5개를 드려요'}
+          </small>
+        </span>
+        <b>
+          {rewards.attendanceRewardGranted
+            ? `${rewards.balance}개`
+            : `${attendanceProgress}/${ATTENDANCE_REWARD_GOAL_DAYS}일`}
+        </b>
+      </div>
+      <p className="daily-routine__streak-note">핵심 기능을 하루 한 번 확인하면 출석 기록이 이어져요.</p>
     </section>
   )
 }

@@ -1635,12 +1635,65 @@ select {
   background: #3f9160;
 }
 
+.daily-routine__reward {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid rgba(142, 184, 255, 0.2);
+  border-radius: 16px;
+  background: rgba(110, 164, 255, 0.12);
+}
+
+.daily-routine__reward-icon {
+  display: inline-flex;
+  width: 34px;
+  height: 34px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 11px;
+  background: #ffffff;
+  color: #1b64da;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.daily-routine__reward-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.daily-routine__reward-copy strong {
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.daily-routine__reward-copy small {
+  color: rgba(255, 255, 255, 0.58);
+  font-size: 10px;
+  line-height: 1.45;
+  word-break: keep-all;
+}
+
+.daily-routine__reward > b {
+  color: #b9d2ff;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
 .daily-routine__streak-note {
   margin: 10px 0 0;
   color: rgba(255, 255, 255, 0.48);
   font-size: 10px;
   line-height: 1.45;
   text-align: center;
+}
+
+.analysis-reward-status strong {
+  color: #1b64da;
 }
 
 .home-page {

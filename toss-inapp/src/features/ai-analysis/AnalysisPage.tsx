@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 
 import { GaugeChart } from '../../components/Charts'
@@ -8,6 +8,11 @@ import { ApiError } from '../../shared/api/http'
 import type { KrxExchange, KRXSearchResult, Market, SentimentResult } from '../../shared/api/types'
 import { useFullScreenAd } from '../../shared/ads/useFullScreenAd'
 import { env } from '../../shared/config/env'
+import {
+  claimAdFreeAnalysisReward,
+  refundAdFreeAnalysisReward,
+  useAdFreeAnalysisRewards,
+} from '../../shared/rewards/adFreeAnalysisRewards'
 import { POPULAR_US_STOCKS, usStockToCompany } from '../../shared/stocks/usStocks'
 import { useWatchlist } from '../../shared/watchlist/useWatchlist'
 
@@ -114,6 +119,8 @@ export function AnalysisPage() {
   const initialKrxExchange: KrxExchange =
     requestedExchange === 'kospi' || requestedExchange === 'kosdaq' ? requestedExchange : 'auto'
   const analysisAd = useFullScreenAd(env.ads.rewardedAdGroupId)
+  const adFreeRewards = useAdFreeAnalysisRewards()
+  const analysisInFlightRef = useRef(false)
   const { items: watchlist } = useWatchlist()
   const [market, setMarket] = useState<Market>(initialMarket)
   const [krxExchange, setKrxExchange] = useState<KrxExchange>(initialKrxExchange)
@@ -223,16 +230,28 @@ export function AnalysisPage() {
       setAnalysisError('분석할 종목을 입력하세요.')
       return
     }
+    if (analysisInFlightRef.current) {
+      return
+    }
 
-    analysisAd.showAd()
+    analysisInFlightRef.current = true
     setAnalysisLoading(true)
     setAnalysisError(null)
+    let usedAdFreeReward = false
 
     try {
+      usedAdFreeReward = analysisAd.isReady && claimAdFreeAnalysisReward()
+      if (!usedAdFreeReward) {
+        analysisAd.showAd()
+      }
+
       const response = await apiClient.sentiment(normalizedTicker, market, krxExchange)
       setResult(response)
       setCurrentStep(2)
     } catch (caughtError) {
+      if (usedAdFreeReward) {
+        refundAdFreeAnalysisReward()
+      }
       if (caughtError instanceof ApiError) {
         setAnalysisError(caughtError.detail)
       } else if (caughtError instanceof Error) {
@@ -242,6 +261,7 @@ export function AnalysisPage() {
       }
       setResult(null)
     } finally {
+      analysisInFlightRef.current = false
       setAnalysisLoading(false)
     }
   }
@@ -406,7 +426,11 @@ export function AnalysisPage() {
             >
               {analysisLoading ? 'AI 분석 중...' : 'AI 분석 실행'}
             </button>
-            {analysisAd.enabled ? (
+            {adFreeRewards.balance > 0 ? (
+              <p className="helper-text helper-text--tight analysis-reward-status">
+                광고 없는 AI 분석권 <strong>{adFreeRewards.balance}개</strong> 보유 · 광고가 표시될 분석에서 자동으로 사용돼요.
+              </p>
+            ) : analysisAd.enabled ? (
               <p className="helper-text helper-text--tight">
                 AI 분석 실행 시 리워드 광고가 표시될 수 있습니다.
               </p>

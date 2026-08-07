@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 
+import { grantAttendanceReward } from '../rewards/adFreeAnalysisRewards'
+
 const DAILY_ROUTINE_STORAGE_KEY = 'quant.toss_inapp.daily_routine'
 const DAILY_ROUTINE_UPDATED_EVENT = 'quant:daily-routine-updated'
 const HISTORY_LIMIT_DAYS = 35
@@ -84,22 +86,26 @@ function persistHistory(history: RoutineHistory) {
 }
 
 export function recordDailyRoutineVisit(pathname: string, now = new Date()) {
+  const history = readHistory()
   if (!isRoutinePath(pathname)) {
+    grantAttendanceReward(calculateStreak(history, now))
     return
   }
 
-  const history = readHistory()
   const today = localDateKey(now)
   const completedPaths = new Set(history[today] ?? [])
   if (completedPaths.has(pathname)) {
+    grantAttendanceReward(calculateStreak(history, now))
     return
   }
 
   completedPaths.add(pathname)
-  persistHistory({
+  const nextHistory = {
     ...history,
     [today]: [...completedPaths],
-  })
+  }
+  persistHistory(nextHistory)
+  grantAttendanceReward(calculateStreak(nextHistory, now))
 }
 
 function calculateStreak(history: RoutineHistory, now: Date) {
