@@ -3009,8 +3009,8 @@ def summarize_sector_rows(market: str, rows: list[dict[str, Any]]) -> str:
     return (
         f"{market_name} 시장에서 최근 1개월 기준 상대적으로 강한 섹터는 {leaders}입니다. "
         f"약한 흐름은 {laggards} 쪽입니다. "
-        f"{positive_month}/{len(rows)}개 섹터가 최근 1개월 수익률 플러스이고, "
-        f"{above_20dma}/{len(rows)}개 섹터가 20일선 위에 있습니다."
+        f"분석 대상 전체 {len(rows)}개 섹터 중 {positive_month}개는 최근 1개월 수익률이 올랐고, "
+        f"{above_20dma}개는 현재 20일 이동평균선 위에 있습니다."
     )
 
 
