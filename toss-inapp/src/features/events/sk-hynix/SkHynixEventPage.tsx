@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 
 import { apiClient } from '../../../shared/api/client'
@@ -7,7 +7,13 @@ import type {
   QuoteSnapshot,
   SentimentArticle,
   SentimentResult,
+  StockHistoryRow,
 } from '../../../shared/api/types'
+import {
+  calculateAddBuyDecision,
+  isValidAddBuyInputs,
+  type AddBuyInputs,
+} from './addBuyDecision'
 
 const SK_HYNIX_PARAMS = '?market=krx&ticker=000660&krx_exchange=kospi'
 const POSITIVE_TERMS = [
@@ -165,6 +171,29 @@ function formatTodayLabel() {
   }).format(new Date())
 }
 
+function recentStockWindow() {
+  const endDate = new Date()
+  endDate.setDate(endDate.getDate() + 1)
+  const startDate = new Date(endDate)
+  startDate.setDate(startDate.getDate() - 120)
+  const format = (value: Date) => {
+    const year = value.getFullYear()
+    const month = `${value.getMonth() + 1}`.padStart(2, '0')
+    const day = `${value.getDate()}`.padStart(2, '0')
+    return `${year}-${month}-${day}`
+  }
+  return { startDate: format(startDate), endDate: format(endDate) }
+}
+
+function parseAmount(value: string) {
+  const parsed = Number(value.replaceAll(',', '').trim())
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+function normalizeAmountInput(value: string) {
+  return value.replace(/[^0-9.]/g, '').replace(/(\..*)\./g, '$1')
+}
+
 function classifyArticle(article: SentimentArticle): ClassifiedArticle {
   if (article.sentiment) {
     return {
@@ -260,7 +289,15 @@ export function SkHynixEventPage() {
   const [news, setNews] = useState<SentimentResult | null>(null)
   const [newsLoading, setNewsLoading] = useState(true)
   const [newsError, setNewsError] = useState<string | null>(null)
+  const [historyRows, setHistoryRows] = useState<StockHistoryRow[]>([])
+  const [historyLoading, setHistoryLoading] = useState(true)
+  const [historyError, setHistoryError] = useState<string | null>(null)
   const [refreshToken, setRefreshToken] = useState(0)
+  const [averagePrice, setAveragePrice] = useState('')
+  const [shares, setShares] = useState('')
+  const [addBudget, setAddBudget] = useState('')
+  const [portfolioWeight, setPortfolioWeight] = useState('')
+  const [hasRequestedDecision, setHasRequestedDecision] = useState(false)
 
   useEffect(() => {
     const abortController = new AbortController()
@@ -316,8 +353,40 @@ export function SkHynixEventPage() {
       }
     }
 
+    async function loadHistory() {
+      setHistoryLoading(true)
+      setHistoryError(null)
+      try {
+        const { startDate, endDate } = recentStockWindow()
+        const response = await apiClient.stockData(
+          '000660',
+          startDate,
+          endDate,
+          'krx',
+          'kospi',
+          abortController.signal,
+        )
+        setHistoryRows(response.rows)
+      } catch (caughtError) {
+        if (abortController.signal.aborted) {
+          return
+        }
+        setHistoryRows([])
+        setHistoryError(
+          caughtError instanceof ApiError
+            ? caughtError.detail
+            : '최근 가격 흐름을 불러오지 못했습니다.',
+        )
+      } finally {
+        if (!abortController.signal.aborted) {
+          setHistoryLoading(false)
+        }
+      }
+    }
+
     void loadQuote()
     void loadTodayNews()
+    void loadHistory()
     return () => abortController.abort()
   }, [refreshToken])
 
@@ -339,6 +408,42 @@ export function SkHynixEventPage() {
   const neutralArticles = classifiedArticles.filter(
     (article) => article.sentiment === 'neutral',
   )
+  const addBuyInputs: AddBuyInputs = {
+    averagePrice: parseAmount(averagePrice),
+    shares: parseAmount(shares),
+    budget: parseAmount(addBudget),
+    portfolioWeight: parseAmount(portfolioWeight),
+  }
+  const addBuyDecision = useMemo(
+    () =>
+      calculateAddBuyDecision({
+        currentPrice: quote?.close ?? 0,
+        changePct: quote?.change_pct ?? 0,
+        rows: historyRows,
+        positiveNewsCount: positiveArticles.length,
+        negativeNewsCount: negativeArticles.length,
+        newsReady: !newsLoading && !newsError && news !== null,
+        inputs: addBuyInputs,
+      }),
+    [
+      addBuyInputs.averagePrice,
+      addBuyInputs.budget,
+      addBuyInputs.portfolioWeight,
+      addBuyInputs.shares,
+      historyRows,
+      negativeArticles.length,
+      news,
+      newsError,
+      newsLoading,
+      positiveArticles.length,
+      quote,
+    ],
+  )
+  const addBuyInputError = !isValidAddBuyInputs(addBuyInputs)
+    ? '평단가·보유 수량·추가 예산을 입력하고, 현재 비중은 0% 초과 100% 이하로 적어주세요.'
+    : quote && addBuyInputs.budget < quote.close
+      ? `추가 예산이 현재 1주 가격 ${formatKrw(quote.close)}보다 적어요.`
+      : null
 
   return (
     <main className="page-shell hynix-event">
@@ -355,14 +460,14 @@ export function SkHynixEventPage() {
         <h1 className="hynix-event__title">
           SK하이닉스를 보는
           <br />
-          <em>세 가지 투자 시선</em>
+          <em>네 가지 투자 시선</em>
         </h1>
         <p className="hynix-event__description">
-          오늘의 뉴스부터 과거 전략, 모의투자까지 지금 필요한 체크만 한곳에 모았어요.
+          추매 판단부터 오늘의 뉴스, 과거 전략, 모의투자까지 필요한 체크만 모았어요.
         </p>
 
-        <a className="hynix-event__primary-link" href="#today-hynix-news">
-          오늘의 호재·악재 확인하기
+        <a className="hynix-event__primary-link" href="#hynix-add-buy">
+          내 추매 판단 받기
           <span aria-hidden="true">↓</span>
         </a>
 
@@ -393,6 +498,182 @@ export function SkHynixEventPage() {
             </button>
           ) : null}
         </div>
+      </section>
+
+      <section
+        id="hynix-add-buy"
+        className="hynix-add-buy"
+        aria-labelledby="hynix-add-buy-title"
+      >
+        <div className="hynix-event__section-heading">
+          <span>ADD-BUY CHECK</span>
+          <h2 id="hynix-add-buy-title">지금 추매해도 될까요?</h2>
+          <p>내 보유 정보와 최신 가격·추세·뉴스·종목 비중을 함께 계산해요.</p>
+        </div>
+
+        <div className="hynix-add-buy__form">
+          <div className="hynix-add-buy__field-grid">
+            <label className="hynix-add-buy__field" htmlFor="hynix-average-price">
+              <span>내 평단가</span>
+              <span className="hynix-add-buy__input-wrap">
+                <input
+                  id="hynix-average-price"
+                  inputMode="decimal"
+                  value={averagePrice}
+                  onChange={(event) => {
+                    setAveragePrice(normalizeAmountInput(event.target.value))
+                    setHasRequestedDecision(false)
+                  }}
+                  placeholder="예: 180000"
+                />
+                <b>원</b>
+              </span>
+            </label>
+            <label className="hynix-add-buy__field" htmlFor="hynix-shares">
+              <span>보유 수량</span>
+              <span className="hynix-add-buy__input-wrap">
+                <input
+                  id="hynix-shares"
+                  inputMode="decimal"
+                  value={shares}
+                  onChange={(event) => {
+                    setShares(normalizeAmountInput(event.target.value))
+                    setHasRequestedDecision(false)
+                  }}
+                  placeholder="예: 10"
+                />
+                <b>주</b>
+              </span>
+            </label>
+            <label className="hynix-add-buy__field" htmlFor="hynix-add-budget">
+              <span>이번 추가 예산</span>
+              <span className="hynix-add-buy__input-wrap">
+                <input
+                  id="hynix-add-budget"
+                  inputMode="decimal"
+                  value={addBudget}
+                  onChange={(event) => {
+                    setAddBudget(normalizeAmountInput(event.target.value))
+                    setHasRequestedDecision(false)
+                  }}
+                  placeholder="예: 2000000"
+                />
+                <b>원</b>
+              </span>
+            </label>
+            <label className="hynix-add-buy__field" htmlFor="hynix-portfolio-weight">
+              <span>현재 계좌 내 SK 비중</span>
+              <span className="hynix-add-buy__input-wrap">
+                <input
+                  id="hynix-portfolio-weight"
+                  inputMode="decimal"
+                  value={portfolioWeight}
+                  onChange={(event) => {
+                    setPortfolioWeight(normalizeAmountInput(event.target.value))
+                    setHasRequestedDecision(false)
+                  }}
+                  placeholder="예: 20"
+                />
+                <b>%</b>
+              </span>
+            </label>
+          </div>
+
+          <div className="hynix-add-buy__data-status" aria-live="polite">
+            {quoteLoading || historyLoading ? (
+              <span>최신 시세와 120일 가격 흐름을 확인하고 있어요.</span>
+            ) : null}
+            {!quoteLoading && !historyLoading && !quoteError && !historyError ? (
+              <span>최신 시세 · 이동평균 · RSI · 오늘 뉴스 반영 준비 완료</span>
+            ) : null}
+            {historyError ? <span>가격 추세 데이터가 부족해 보수적으로 판단해요.</span> : null}
+            {quoteError ? <span>현재가를 불러온 뒤 판단할 수 있어요.</span> : null}
+          </div>
+
+          <button
+            type="button"
+            className="hynix-add-buy__submit"
+            disabled={quoteLoading || historyLoading || Boolean(quoteError)}
+            onClick={() => setHasRequestedDecision(true)}
+          >
+            {quoteLoading || historyLoading ? '판단 데이터 준비 중...' : '추매 판단 계산하기'}
+          </button>
+          <p className="hynix-add-buy__privacy">입력값은 서버로 전송하거나 저장하지 않아요.</p>
+        </div>
+
+        {hasRequestedDecision && addBuyInputError ? (
+          <div className="hynix-add-buy__input-error" role="alert">
+            {addBuyInputError}
+          </div>
+        ) : null}
+
+        {hasRequestedDecision && addBuyDecision ? (
+          <div className={`hynix-add-buy__result hynix-add-buy__result--${addBuyDecision.verdict}`}>
+            <div className="hynix-add-buy__result-top">
+              <div
+                className="hynix-add-buy__score"
+                style={{
+                  background: `conic-gradient(var(--decision-color) ${addBuyDecision.score}%, #e9edf1 0)`,
+                }}
+                aria-label={`추매 판단 점수 ${addBuyDecision.score}점`}
+              >
+                <span>
+                  <strong>{addBuyDecision.score}</strong>
+                  <small>100점</small>
+                </span>
+              </div>
+              <div className="hynix-add-buy__verdict">
+                <span>{addBuyDecision.verdictLabel}</span>
+                <h3>{addBuyDecision.headline}</h3>
+                <p>{addBuyDecision.action}</p>
+              </div>
+            </div>
+
+            <div className="hynix-add-buy__plan" aria-label="추매 후 예상 변화">
+              <div>
+                <span>살 수 있는 수량</span>
+                <strong>{addBuyDecision.purchasableShares.toLocaleString('ko-KR')}주</strong>
+                <small>{formatKrw(addBuyDecision.expectedSpend)} 사용</small>
+              </div>
+              <div>
+                <span>추매 후 평단</span>
+                <strong>{formatKrw(addBuyDecision.newAveragePrice)}</strong>
+                <small>현재가 {formatKrw(quote?.close)}</small>
+              </div>
+              <div>
+                <span>추매 후 SK 비중</span>
+                <strong>{addBuyDecision.afterWeight.toFixed(1)}%</strong>
+                <small>현재 {addBuyInputs.portfolioWeight.toFixed(1)}%</small>
+              </div>
+            </div>
+
+            <div className="hynix-add-buy__factors">
+              <h4>왜 이렇게 판단했나요?</h4>
+              <div className="hynix-add-buy__factor-list">
+                {addBuyDecision.factors.map((factor) => (
+                  <article key={factor.label} className={`hynix-add-buy__factor hynix-add-buy__factor--${factor.tone}`}>
+                    <span>{factor.label}</span>
+                    <strong>{factor.value}</strong>
+                    <p>{factor.explanation}</p>
+                  </article>
+                ))}
+              </div>
+            </div>
+
+            {addBuyDecision.safeguards.length > 0 ? (
+              <div className="hynix-add-buy__safeguards">
+                <h4>매수 전 멈춤 조건</h4>
+                <ul>
+                  {addBuyDecision.safeguards.map((item) => <li key={item}>{item}</li>)}
+                </ul>
+              </div>
+            ) : null}
+
+            <p className="hynix-add-buy__result-note">
+              점수는 수익을 보장하는 예측값이 아니라, 감정적인 물타기와 과도한 비중 확대를 막기 위한 체크 결과예요.
+            </p>
+          </div>
+        ) : null}
       </section>
 
       <section
@@ -518,8 +799,8 @@ export function SkHynixEventPage() {
       </section>
 
       <p className="hynix-event__notice">
-        뉴스 분류는 기사 제목과 AI 분석에 기반한 참고 정보이며, 특정 종목의 매수·매도 추천이
-        아닙니다. 원문과 공시를 함께 확인하세요.
+        추매 판단과 뉴스 분류는 가격 데이터·기사 제목·입력한 비중에 기반한 참고 정보이며,
+        특정 종목의 매수·매도 추천이 아닙니다. 원문과 공시를 함께 확인하세요.
       </p>
     </main>
   )
