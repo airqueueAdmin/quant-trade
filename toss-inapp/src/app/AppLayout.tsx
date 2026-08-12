@@ -102,7 +102,25 @@ export function AppLayout() {
 
   useEffect(() => {
     recordDailyRoutineVisit(location.pathname)
+    setIsMoreOpen(false)
   }, [location.pathname])
+
+  useEffect(() => {
+    const closeEntrySheet = () => setIsMoreOpen(false)
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        closeEntrySheet()
+      }
+    }
+
+    closeEntrySheet()
+    window.addEventListener('pageshow', closeEntrySheet)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    return () => {
+      window.removeEventListener('pageshow', closeEntrySheet)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
+  }, [])
 
   useEffect(() => {
     if (!isMoreOpen) {
