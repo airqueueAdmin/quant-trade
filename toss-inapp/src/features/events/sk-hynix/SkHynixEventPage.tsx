@@ -16,6 +16,7 @@ import {
 } from './addBuyDecision'
 
 const SK_HYNIX_PARAMS = '?market=krx&ticker=000660&krx_exchange=kospi'
+const SK_HYNIX_ADR_PARAMS = '?market=us&ticker=SKHY'
 const POSITIVE_TERMS = [
   '사상 최대',
   '최대 실적',
@@ -101,6 +102,14 @@ const EVENT_ACTIONS = [
     to: '/paper-trading?ticker=000660',
     color: 'amber',
   },
+  {
+    number: '04',
+    eyebrow: 'NASDAQ ADR',
+    title: 'SK hynix ADR 분석하기',
+    description: '미국 시장에서 거래되는 SKHY의 뉴스 분위기와 투자 심리를 확인해요.',
+    to: `/ai-analysis${SK_HYNIX_ADR_PARAMS}`,
+    color: 'blue',
+  },
 ] as const
 
 type NewsTone = 'positive' | 'negative' | 'neutral'
@@ -114,6 +123,13 @@ function formatKrw(value?: number | null) {
     return '-'
   }
   return `${Math.round(value).toLocaleString('ko-KR')}원`
+}
+
+function formatUsd(value?: number | null) {
+  if (value === undefined || value === null) {
+    return '-'
+  }
+  return `$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
 function formatPct(value?: number | null) {
@@ -286,6 +302,9 @@ export function SkHynixEventPage() {
   const [quote, setQuote] = useState<QuoteSnapshot | null>(null)
   const [quoteLoading, setQuoteLoading] = useState(true)
   const [quoteError, setQuoteError] = useState<string | null>(null)
+  const [adrQuote, setAdrQuote] = useState<QuoteSnapshot | null>(null)
+  const [adrQuoteLoading, setAdrQuoteLoading] = useState(true)
+  const [adrQuoteError, setAdrQuoteError] = useState<string | null>(null)
   const [news, setNews] = useState<SentimentResult | null>(null)
   const [newsLoading, setNewsLoading] = useState(true)
   const [newsError, setNewsError] = useState<string | null>(null)
@@ -321,6 +340,29 @@ export function SkHynixEventPage() {
       } finally {
         if (!abortController.signal.aborted) {
           setQuoteLoading(false)
+        }
+      }
+    }
+
+    async function loadAdrQuote() {
+      setAdrQuoteLoading(true)
+      setAdrQuoteError(null)
+      try {
+        const response = await apiClient.quote('SKHY', 'us', 'auto', abortController.signal)
+        setAdrQuote(response)
+      } catch (caughtError) {
+        if (abortController.signal.aborted) {
+          return
+        }
+        setAdrQuote(null)
+        setAdrQuoteError(
+          caughtError instanceof ApiError
+            ? caughtError.detail
+            : 'ADR 시세 API 서버에 연결하지 못했습니다.',
+        )
+      } finally {
+        if (!abortController.signal.aborted) {
+          setAdrQuoteLoading(false)
         }
       }
     }
@@ -385,6 +427,7 @@ export function SkHynixEventPage() {
     }
 
     void loadQuote()
+    void loadAdrQuote()
     void loadTodayNews()
     void loadHistory()
     return () => abortController.abort()
@@ -394,6 +437,12 @@ export function SkHynixEventPage() {
     quote && quote.change_pct > 0
       ? 'hynix-event__quote-change--up'
       : quote && quote.change_pct < 0
+        ? 'hynix-event__quote-change--down'
+        : ''
+  const adrChangeTone =
+    adrQuote && adrQuote.change_pct > 0
+      ? 'hynix-event__quote-change--up'
+      : adrQuote && adrQuote.change_pct < 0
         ? 'hynix-event__quote-change--down'
         : ''
   const classifiedArticles = (news?.articles ?? [])
@@ -456,7 +505,7 @@ export function SkHynixEventPage() {
           <span>SK하이닉스 투자자 전용</span>
         </div>
 
-        <p className="hynix-event__ticker">000660 · KOSPI</p>
+        <p className="hynix-event__ticker">000660 · KOSPI / SKHY · NASDAQ ADR</p>
         <h1 className="hynix-event__title">
           SK하이닉스를 보는
           <br />
@@ -471,32 +520,59 @@ export function SkHynixEventPage() {
           <span aria-hidden="true">↓</span>
         </a>
 
-        <div className="hynix-event__quote" aria-live="polite">
-          <div>
-            <span>SK하이닉스 현재가</span>
-            {quoteLoading ? <strong>불러오는 중...</strong> : null}
-            {!quoteLoading && quote ? <strong>{formatKrw(quote.close)}</strong> : null}
-            {!quoteLoading && quoteError ? <strong>시세 연결 필요</strong> : null}
-          </div>
-          {!quoteLoading && quote ? (
-            <div className={`hynix-event__quote-change ${changeTone}`}>
-              <strong>{formatPct(quote.change_pct)}</strong>
-              <span>
-                {quote.source === 'naver_finance_realtime' ? '실시간' : '최근 종가'} ·{' '}
-                {formatKstDateTime(quote.as_of)}
-              </span>
+        <div className="hynix-event__quotes">
+          <div className="hynix-event__quote" aria-live="polite">
+            <div>
+              <span>SK하이닉스 · KOSPI</span>
+              {quoteLoading ? <strong>불러오는 중...</strong> : null}
+              {!quoteLoading && quote ? <strong>{formatKrw(quote.close)}</strong> : null}
+              {!quoteLoading && quoteError ? <strong>시세 연결 필요</strong> : null}
             </div>
-          ) : null}
-          {!quoteLoading && quoteError ? (
-            <button
-              type="button"
-              className="hynix-event__retry"
-              title={quoteError}
-              onClick={() => setRefreshToken((value) => value + 1)}
-            >
-              다시 시도
-            </button>
-          ) : null}
+            {!quoteLoading && quote ? (
+              <div className={`hynix-event__quote-change ${changeTone}`}>
+                <strong>{formatPct(quote.change_pct)}</strong>
+                <span>
+                  {quote.source === 'naver_finance_realtime' ? '실시간' : '최근 종가'} ·{' '}
+                  {formatKstDateTime(quote.as_of)}
+                </span>
+              </div>
+            ) : null}
+            {!quoteLoading && quoteError ? (
+              <button
+                type="button"
+                className="hynix-event__retry"
+                title={quoteError}
+                onClick={() => setRefreshToken((value) => value + 1)}
+              >
+                다시 시도
+              </button>
+            ) : null}
+          </div>
+
+          <div className="hynix-event__quote" aria-live="polite">
+            <div>
+              <span>SK hynix ADR · NASDAQ</span>
+              {adrQuoteLoading ? <strong>불러오는 중...</strong> : null}
+              {!adrQuoteLoading && adrQuote ? <strong>{formatUsd(adrQuote.close)}</strong> : null}
+              {!adrQuoteLoading && adrQuoteError ? <strong>시세 연결 필요</strong> : null}
+            </div>
+            {!adrQuoteLoading && adrQuote ? (
+              <div className={`hynix-event__quote-change ${adrChangeTone}`}>
+                <strong>{formatPct(adrQuote.change_pct)}</strong>
+                <span>최근 종가 · {formatKstDateTime(adrQuote.as_of)}</span>
+              </div>
+            ) : null}
+            {!adrQuoteLoading && adrQuoteError ? (
+              <button
+                type="button"
+                className="hynix-event__retry"
+                title={adrQuoteError}
+                onClick={() => setRefreshToken((value) => value + 1)}
+              >
+                다시 시도
+              </button>
+            ) : null}
+          </div>
         </div>
       </section>
 
@@ -776,7 +852,7 @@ export function SkHynixEventPage() {
         <div className="hynix-event__section-heading">
           <span>INVESTOR CHECK</span>
           <h2 id="hynix-event-actions-title">다음은 무엇을 볼까요?</h2>
-          <p>원하는 메뉴를 누르면 SK하이닉스가 미리 선택된 상태로 시작해요.</p>
+          <p>원하는 메뉴를 누르면 SK하이닉스 국내주식 또는 ADR이 미리 선택된 상태로 시작해요.</p>
         </div>
 
         <div className="hynix-event__action-list">

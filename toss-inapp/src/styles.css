@@ -450,13 +450,19 @@ select {
   font-weight: 400;
 }
 
+.hynix-event__quotes {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
 .hynix-event__quote {
   display: flex;
   min-height: 82px;
   align-items: center;
   justify-content: space-between;
   gap: 14px;
-  margin-top: 14px;
+  margin-top: 0;
   padding: 15px 16px;
   border: 1px solid rgba(255, 255, 255, 0.16);
   border-radius: 18px;
@@ -1166,6 +1172,10 @@ select {
   background: linear-gradient(135deg, #fff7e5 0%, #fffdf7 100%);
 }
 
+.hynix-event__action--blue {
+  background: linear-gradient(135deg, #edf5ff 0%, #f8fbff 100%);
+}
+
 .hynix-event__action-number {
   display: grid;
   width: 44px;
@@ -1185,6 +1195,10 @@ select {
 
 .hynix-event__action--amber .hynix-event__action-number {
   color: #b87813;
+}
+
+.hynix-event__action--blue .hynix-event__action-number {
+  color: #2f6fc5;
 }
 
 .hynix-event__action-copy {

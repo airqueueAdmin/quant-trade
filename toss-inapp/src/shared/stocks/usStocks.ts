@@ -3,6 +3,7 @@ import type { KRXSearchResult, USSearchResult } from '../api/types'
 export const POPULAR_US_STOCKS: USSearchResult[] = [
   { name: 'Apple', ticker: 'AAPL', exchange: 'NASDAQ', quote_type: 'equity', currency: 'USD', aliases: ['애플'] },
   { name: 'NVIDIA', ticker: 'NVDA', exchange: 'NASDAQ', quote_type: 'equity', currency: 'USD', aliases: ['엔비디아'] },
+  { name: 'SK hynix ADR', ticker: 'SKHY', exchange: 'NASDAQ', quote_type: 'equity', currency: 'USD', aliases: ['SK하이닉스', 'SK 하이닉스', '에스케이하이닉스', '하이닉스'] },
   { name: 'Microsoft', ticker: 'MSFT', exchange: 'NASDAQ', quote_type: 'equity', currency: 'USD', aliases: ['마이크로소프트'] },
   { name: 'Tesla', ticker: 'TSLA', exchange: 'NASDAQ', quote_type: 'equity', currency: 'USD', aliases: ['테슬라'] },
   { name: 'Amazon', ticker: 'AMZN', exchange: 'NASDAQ', quote_type: 'equity', currency: 'USD', aliases: ['아마존'] },
