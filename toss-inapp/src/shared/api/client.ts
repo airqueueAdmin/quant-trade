@@ -11,6 +11,7 @@ import type {
   KrxExchange,
   KRXSearchResult,
   Market,
+  MarketMoversSnapshot,
   MovingAverageBacktestRequest,
   MovingAverageOptimizationRequest,
   OptimizationResult,
@@ -90,6 +91,13 @@ export const apiClient = {
   marketSectors(market: Market, signal?: AbortSignal) {
     return apiRequest<SectorSnapshot>('/market/sectors', {
       params: { market },
+      signal,
+    })
+  },
+
+  marketMovers(market: Market, limit = 10, signal?: AbortSignal) {
+    return apiRequest<MarketMoversSnapshot>('/market/movers', {
+      params: { market, limit },
       signal,
     })
   },

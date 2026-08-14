@@ -21,6 +21,11 @@ const PRIMARY_NAV_ITEMS: Array<{
 
 const MORE_NAV_ITEMS = [
   {
+    to: '/market-movers',
+    label: '전일 대비 급등락',
+    description: '미국·국내 증시의 급등주와 급락주를 한눈에 확인해요.',
+  },
+  {
     to: '/closing-bet',
     label: '종가베팅',
     description: '수급 지속 가능성과 제외 신호로 후보를 추려요.',

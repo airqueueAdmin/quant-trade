@@ -30,6 +30,7 @@ from data_provider import (
     coerce_datetime_index,
     get_stock_data,
     get_symbol_profile,
+    get_krx_stock_by_ticker,
     search_krx_stocks,
     search_us_stocks,
     normalize_krx_exchange,
@@ -155,6 +156,8 @@ SMTP_PASSWORD = os.getenv("SMTP_PASSWORD") or ""
 SMTP_FROM_EMAIL = (os.getenv("SMTP_FROM_EMAIL") or SMTP_USERNAME or "").strip()
 SMTP_USE_TLS = (os.getenv("SMTP_USE_TLS") or "true").strip().lower() not in {"0", "false", "no"}
 NOTIFICATION_DISPATCH_TOKEN = (os.getenv("NOTIFICATION_DISPATCH_TOKEN") or "").strip()
+MARKET_MOVERS_CACHE_SECONDS = 300
+MARKET_MOVERS_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 APPS_IN_TOSS_CERT_PATH = resolve_secret_file_path(
     "APPS_IN_TOSS_CERT_PATH",
     ["glance-invest-mtls.crt", "glance-invest-mTLS_public.crt"],
@@ -2721,6 +2724,143 @@ def sector_market_name(market: str) -> str:
     return "국내" if market == "krx" else "미국"
 
 
+def build_market_mover_query(market: str, direction: str) -> str | yf.EquityQuery:
+    if market == "us":
+        return "day_gainers" if direction == "gainers" else "day_losers"
+
+    change_operator = "gt" if direction == "gainers" else "lt"
+    return yf.EquityQuery(
+        "and",
+        [
+            yf.EquityQuery("eq", ["region", "kr"]),
+            yf.EquityQuery(change_operator, ["percentchange", 0]),
+            yf.EquityQuery("gte", ["intradaymarketcap", 100_000_000_000]),
+            yf.EquityQuery("gt", ["dayvolume", 10_000]),
+        ],
+    )
+
+
+def normalize_market_mover(raw: dict[str, Any], market: str) -> dict[str, Any] | None:
+    resolved_ticker = str(raw.get("symbol") or "").strip().upper()
+    if not resolved_ticker:
+        return None
+
+    ticker = resolved_ticker
+    krx_exchange = "auto"
+    company_name = str(raw.get("longName") or raw.get("shortName") or ticker).strip()
+    exchange = str(raw.get("fullExchangeName") or raw.get("exchange") or "US").strip()
+    currency = str(raw.get("currency") or ("KRW" if market == "krx" else "USD")).strip().upper()
+
+    if market == "krx":
+        ticker = resolved_ticker.removesuffix(".KS").removesuffix(".KQ")
+        krx_exchange = "kosdaq" if resolved_ticker.endswith(".KQ") else "kospi"
+        exchange = "KOSDAQ" if krx_exchange == "kosdaq" else "KOSPI"
+        local_profile = get_krx_stock_by_ticker(ticker)
+        if local_profile:
+            company_name = local_profile["name"]
+            krx_exchange = local_profile["krx_exchange"]
+            exchange = krx_exchange.upper()
+
+    price = float(raw.get("regularMarketPrice") or 0.0)
+    previous_close = float(raw.get("regularMarketPreviousClose") or 0.0)
+    change_amount = float(raw.get("regularMarketChange") or (price - previous_close))
+    if raw.get("regularMarketChangePercent") is not None:
+        change_pct = float(raw["regularMarketChangePercent"])
+    else:
+        change_pct = ((price / previous_close) - 1) * 100 if previous_close else 0.0
+
+    market_timestamp = int(raw.get("regularMarketTime") or 0)
+    as_of = (
+        datetime.fromtimestamp(market_timestamp, MARKET_TIMEZONES[market]).isoformat()
+        if market_timestamp > 0
+        else datetime.now(MARKET_TIMEZONES[market]).isoformat()
+    )
+
+    return {
+        "ticker": ticker,
+        "resolved_ticker": resolved_ticker,
+        "name": company_name,
+        "market": market,
+        "krx_exchange": krx_exchange,
+        "exchange": exchange,
+        "currency": currency,
+        "price": price,
+        "previous_close": previous_close,
+        "change_amount": change_amount,
+        "change_pct": change_pct,
+        "volume": int(raw.get("regularMarketVolume") or 0),
+        "market_cap": float(raw.get("marketCap") or 0.0),
+        "as_of": as_of,
+    }
+
+
+def fetch_market_movers(market: str, direction: str, limit: int) -> list[dict[str, Any]]:
+    query = build_market_mover_query(market, direction)
+    fetch_count = max(25, min(limit * 3, 100))
+    if isinstance(query, str):
+        response = yf.screen(query, count=fetch_count)
+    else:
+        response = yf.screen(
+            query,
+            size=fetch_count,
+            sortField="percentchange",
+            sortAsc=direction == "losers",
+        )
+
+    rows = [
+        normalized
+        for raw in response.get("quotes", [])
+        if isinstance(raw, dict)
+        for normalized in [normalize_market_mover(raw, market)]
+        if normalized is not None
+    ]
+    rows.sort(key=lambda item: float(item["change_pct"]), reverse=direction == "gainers")
+    return rows[:limit]
+
+
+def create_market_movers_snapshot(market: str, limit: int = 10) -> dict[str, Any]:
+    normalized_market = normalize_market(market)
+    bounded_limit = max(1, min(int(limit), 20))
+    cache_key = f"{normalized_market}:{bounded_limit}"
+    now_timestamp = datetime.now().timestamp()
+    cached = MARKET_MOVERS_CACHE.get(cache_key)
+    if cached and now_timestamp - cached[0] < MARKET_MOVERS_CACHE_SECONDS:
+        return cached[1]
+
+    try:
+        gainers = fetch_market_movers(normalized_market, "gainers", bounded_limit)
+        losers = fetch_market_movers(normalized_market, "losers", bounded_limit)
+    except Exception as exc:
+        logger.warning("Market movers lookup failed for %s", normalized_market, exc_info=True)
+        raise HTTPException(status_code=503, detail="급등·급락 종목 데이터를 가져오지 못했습니다. 잠시 후 다시 시도해 주세요.") from exc
+
+    if not gainers and not losers:
+        raise HTTPException(status_code=503, detail="표시할 급등·급락 종목이 없습니다.")
+
+    all_rows = [*gainers, *losers]
+    as_of = max((item["as_of"] for item in all_rows), default=datetime.now(MARKET_TIMEZONES[normalized_market]).isoformat())
+    snapshot_status, intraday_estimate = describe_sector_snapshot_status(normalized_market)
+    universe_note = (
+        "NASDAQ·NYSE 상장 보통주 중 주가 5달러·시가총액 20억달러 이상"
+        if normalized_market == "us"
+        else "KOSPI·KOSDAQ 상장 종목 중 시가총액 1천억원·거래량 1만주 이상"
+    )
+    result = normalize_value(
+        {
+            "market": normalized_market,
+            "market_name": sector_market_name(normalized_market),
+            "as_of": as_of,
+            "snapshot_status": snapshot_status,
+            "intraday_estimate": intraday_estimate,
+            "universe_note": universe_note,
+            "gainers": gainers,
+            "losers": losers,
+        }
+    )
+    MARKET_MOVERS_CACHE[cache_key] = (now_timestamp, result)
+    return result
+
+
 def previous_business_day(target: date) -> date:
     current = target
     while current.weekday() >= 5:
@@ -3370,6 +3510,11 @@ def usdkrw_rate() -> dict[str, Any]:
 @app.get("/market/sectors")
 def market_sectors(market: str = "us") -> dict[str, Any]:
     return create_sector_snapshot(market)
+
+
+@app.get("/market/movers")
+def market_movers(market: str = "us", limit: int = 10) -> dict[str, Any]:
+    return create_market_movers_snapshot(market, limit)
 
 
 @app.get("/quote/{ticker}")

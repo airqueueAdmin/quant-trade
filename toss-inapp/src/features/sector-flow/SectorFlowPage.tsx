@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 
 import { HorizontalBarChart } from '../../components/Charts'
 import { StepFlow } from '../../components/StepFlow'
@@ -148,6 +149,14 @@ export function SectorFlowPage() {
 
   return (
     <main className="page-shell">
+      <Link className="market-movers-entry" to="/market-movers">
+        <span className="market-movers-entry__icon" aria-hidden="true">↕</span>
+        <span>
+          <small>전일 대비 급등·급락</small>
+          <strong>미국·국내 주도주와 급락주 보기</strong>
+        </span>
+        <b aria-hidden="true">›</b>
+      </Link>
       <StepFlow
         pageTitle="섹터 흐름"
         steps={SECTOR_STEPS}

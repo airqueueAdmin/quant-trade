@@ -185,6 +185,34 @@ export type SectorSnapshot = {
   sectors: SectorRow[]
 }
 
+export type MarketMover = {
+  ticker: string
+  resolved_ticker: string
+  name: string
+  market: Market
+  krx_exchange: KrxExchange
+  exchange: string
+  currency: 'KRW' | 'USD'
+  price: number
+  previous_close: number
+  change_amount: number
+  change_pct: number
+  volume: number
+  market_cap: number
+  as_of: string
+}
+
+export type MarketMoversSnapshot = {
+  market: Market
+  market_name: string
+  as_of: string
+  snapshot_status: string
+  intraday_estimate: boolean
+  universe_note: string
+  gainers: MarketMover[]
+  losers: MarketMover[]
+}
+
 export type PaperTradingHolding = {
   ticker: string
   company_name?: string | null
