@@ -10,6 +10,7 @@ import secrets
 import smtplib
 import ssl
 import tempfile
+from threading import Lock
 from typing import Any, Iterable
 import json
 from zoneinfo import ZoneInfo
@@ -157,7 +158,23 @@ SMTP_FROM_EMAIL = (os.getenv("SMTP_FROM_EMAIL") or SMTP_USERNAME or "").strip()
 SMTP_USE_TLS = (os.getenv("SMTP_USE_TLS") or "true").strip().lower() not in {"0", "false", "no"}
 NOTIFICATION_DISPATCH_TOKEN = (os.getenv("NOTIFICATION_DISPATCH_TOKEN") or "").strip()
 MARKET_MOVERS_CACHE_SECONDS = 300
+MARKET_MOVERS_STALE_CACHE_SECONDS = 3600
+MARKET_MOVERS_FAILURE_CACHE_SECONDS = 60
 MARKET_MOVERS_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+MARKET_MOVERS_FAILURE_CACHE: dict[str, float] = {}
+MARKET_MOVERS_CACHE_LOCK = Lock()
+PAPER_RANKING_QUOTE_CACHE_SECONDS = 30
+PAPER_RANKING_QUOTE_STALE_CACHE_SECONDS = 900
+PAPER_RANKING_QUOTE_FAILURE_CACHE_SECONDS = 60
+PAPER_RANKING_QUOTE_CACHE: dict[tuple[str, str, str], tuple[float, dict[str, Any]]] = {}
+PAPER_RANKING_QUOTE_FAILURE_CACHE: dict[tuple[str, str, str], float] = {}
+PAPER_RANKING_QUOTE_CACHE_LOCK = Lock()
+PAPER_RANKING_FX_CACHE_SECONDS = 300
+PAPER_RANKING_FX_STALE_CACHE_SECONDS = 21_600
+PAPER_RANKING_FX_FAILURE_CACHE_SECONDS = 60
+PAPER_RANKING_FX_CACHE: tuple[float, float] | None = None
+PAPER_RANKING_FX_LAST_FAILURE: float | None = None
+PAPER_RANKING_FX_CACHE_LOCK = Lock()
 APPS_IN_TOSS_CERT_PATH = resolve_secret_file_path(
     "APPS_IN_TOSS_CERT_PATH",
     ["glance-invest-mtls.crt", "glance-invest-mTLS_public.crt"],
@@ -1163,6 +1180,85 @@ def build_paper_ranking_profile(account_id: str) -> dict[str, str]:
     }
 
 
+def get_paper_ranking_quote(market: str, ticker: str, exchange: str) -> dict[str, Any] | None:
+    """Return a fresh quote when possible and a bounded stale quote during provider outages."""
+    cache_key = (market, ticker, exchange)
+
+    with PAPER_RANKING_QUOTE_CACHE_LOCK:
+        now_timestamp = datetime.now().timestamp()
+        cached = PAPER_RANKING_QUOTE_CACHE.get(cache_key)
+        cached_age = now_timestamp - cached[0] if cached else None
+        if cached and cached_age is not None and cached_age < PAPER_RANKING_QUOTE_CACHE_SECONDS:
+            return cached[1].copy()
+
+        last_failure = PAPER_RANKING_QUOTE_FAILURE_CACHE.get(cache_key)
+        retry_blocked = (
+            last_failure is not None
+            and now_timestamp - last_failure < PAPER_RANKING_QUOTE_FAILURE_CACHE_SECONDS
+        )
+        if retry_blocked:
+            if cached and cached_age is not None and cached_age < PAPER_RANKING_QUOTE_STALE_CACHE_SECONDS:
+                stale_quote = cached[1].copy()
+                stale_quote["_ranking_stale"] = True
+                return stale_quote
+            return None
+
+        try:
+            quote = create_quote_snapshot(
+                ticker,
+                market=market,
+                krx_exchange=exchange,
+            )
+        except Exception:
+            PAPER_RANKING_QUOTE_FAILURE_CACHE[cache_key] = now_timestamp
+            if cached and cached_age is not None and cached_age < PAPER_RANKING_QUOTE_STALE_CACHE_SECONDS:
+                logger.warning("Paper ranking stale quote cache used for %s", ticker, exc_info=True)
+                stale_quote = cached[1].copy()
+                stale_quote["_ranking_stale"] = True
+                return stale_quote
+            logger.warning("Paper ranking average-price fallback used for %s", ticker, exc_info=True)
+            return None
+
+        PAPER_RANKING_QUOTE_CACHE[cache_key] = (now_timestamp, quote.copy())
+        PAPER_RANKING_QUOTE_FAILURE_CACHE.pop(cache_key, None)
+        return quote
+
+
+def get_paper_ranking_usdkrw_rate() -> tuple[float | None, bool]:
+    """Return the cached USD/KRW rate and whether it is older than the fresh TTL."""
+    global PAPER_RANKING_FX_CACHE, PAPER_RANKING_FX_LAST_FAILURE
+
+    with PAPER_RANKING_FX_CACHE_LOCK:
+        now_timestamp = datetime.now().timestamp()
+        cached = PAPER_RANKING_FX_CACHE
+        cached_age = now_timestamp - cached[0] if cached else None
+        if cached and cached_age is not None and cached_age < PAPER_RANKING_FX_CACHE_SECONDS:
+            return cached[1], False
+
+        retry_blocked = (
+            PAPER_RANKING_FX_LAST_FAILURE is not None
+            and now_timestamp - PAPER_RANKING_FX_LAST_FAILURE < PAPER_RANKING_FX_FAILURE_CACHE_SECONDS
+        )
+        if retry_blocked:
+            if cached and cached_age is not None and cached_age < PAPER_RANKING_FX_STALE_CACHE_SECONDS:
+                return cached[1], True
+            return None, False
+
+        try:
+            rate = float(get_usdkrw_snapshot()["rate"])
+        except Exception:
+            PAPER_RANKING_FX_LAST_FAILURE = now_timestamp
+            if cached and cached_age is not None and cached_age < PAPER_RANKING_FX_STALE_CACHE_SECONDS:
+                logger.warning("Paper ranking stale USD/KRW cache used", exc_info=True)
+                return cached[1], True
+            logger.warning("Paper ranking USD/KRW lookup failed", exc_info=True)
+            return None, False
+
+        PAPER_RANKING_FX_CACHE = (now_timestamp, rate)
+        PAPER_RANKING_FX_LAST_FAILURE = None
+        return rate, False
+
+
 def build_paper_trading_leaderboard(
     accounts: list[dict[str, Any]],
     positions: list[dict[str, Any]],
@@ -1193,6 +1289,7 @@ def build_paper_trading_leaderboard(
         account_positions = positions_by_account.get(account_id, [])
         holdings_value = 0.0
         missing_quote_count = 0
+        stale_quote_count = 0
         top_holding: dict[str, Any] | None = None
 
         for position in account_positions:
@@ -1209,6 +1306,8 @@ def build_paper_trading_leaderboard(
             )
             if quote and quote.get("close") is not None:
                 current_price = float(quote.get("price_krw") or quote["close"])
+                if quote.get("_ranking_stale"):
+                    stale_quote_count += 1
             else:
                 current_price = average_price
                 missing_quote_count += 1
@@ -1243,7 +1342,13 @@ def build_paper_trading_leaderboard(
                 "holding_count": len(account_positions),
                 "top_holding": top_holding,
                 "updated_at": account.get("updated_at"),
-                "valuation_status": "partial" if missing_quote_count else "complete",
+                "valuation_status": (
+                    "partial"
+                    if missing_quote_count
+                    else "stale"
+                    if stale_quote_count
+                    else "complete"
+                ),
             }
         )
 
@@ -1350,20 +1455,20 @@ def get_paper_trading_leaderboard(
         if position.get("ticker")
     }
     usdkrw_rate: float | None = None
+    usdkrw_is_stale = False
     for market, ticker, exchange in quote_keys:
-        try:
-            quote = create_quote_snapshot(
-                ticker,
-                market=market,
-                krx_exchange=exchange,
-            )
-            if market == "us":
-                if usdkrw_rate is None:
-                    usdkrw_rate = float(get_usdkrw_snapshot()["rate"])
-                quote["price_krw"] = float(quote["close"]) * usdkrw_rate
-            quote_prices[(market, ticker, exchange)] = quote
-        except Exception:
-            logger.warning("Paper ranking quote fallback used for %s", ticker, exc_info=True)
+        quote = get_paper_ranking_quote(market, ticker, exchange)
+        if quote is None:
+            continue
+        if market == "us":
+            if usdkrw_rate is None:
+                usdkrw_rate, usdkrw_is_stale = get_paper_ranking_usdkrw_rate()
+            if usdkrw_rate is None:
+                continue
+            quote["price_krw"] = float(quote["close"]) * usdkrw_rate
+            if usdkrw_is_stale:
+                quote["_ranking_stale"] = True
+        quote_prices[(market, ticker, exchange)] = quote
 
     result = build_paper_trading_leaderboard(
         accounts,
@@ -2794,7 +2899,87 @@ def normalize_market_mover(raw: dict[str, Any], market: str) -> dict[str, Any] |
     }
 
 
+def normalize_naver_krx_market_mover(raw: dict[str, Any]) -> dict[str, Any] | None:
+    ticker = str(raw.get("itemCode") or "").strip()
+    if not ticker.isdigit() or len(ticker) != 6:
+        return None
+
+    try:
+        price = parse_localized_number(raw.get("closePriceRaw") or raw.get("closePrice"))
+        change_amount = parse_localized_number(
+            raw.get("compareToPreviousClosePriceRaw") or raw.get("compareToPreviousClosePrice")
+        )
+        change_pct = parse_localized_number(raw.get("fluctuationsRatio"))
+        volume = int(parse_localized_number(
+            raw.get("accumulatedTradingVolumeRaw") or raw.get("accumulatedTradingVolume")
+        ))
+        market_cap = float(parse_localized_number(raw.get("marketValueRaw")))
+    except (TypeError, ValueError):
+        return None
+
+    exchange_payload = raw.get("stockExchangeType") or {}
+    exchange_code = str(exchange_payload.get("code") or "").upper()
+    is_kosdaq = str(raw.get("sosok") or "") == "1" or exchange_code == "KQ"
+    krx_exchange = "kosdaq" if is_kosdaq else "kospi"
+    exchange = "KOSDAQ" if is_kosdaq else "KOSPI"
+    traded_at = str(raw.get("localTradedAt") or "").strip()
+    if not traded_at:
+        traded_at = datetime.now(MARKET_TIMEZONES["krx"]).isoformat()
+
+    return {
+        "ticker": ticker,
+        "resolved_ticker": f"{ticker}.KQ" if is_kosdaq else f"{ticker}.KS",
+        "name": str(raw.get("stockName") or ticker).strip(),
+        "market": "krx",
+        "krx_exchange": krx_exchange,
+        "exchange": exchange,
+        "currency": "KRW",
+        "price": price,
+        "previous_close": price - change_amount,
+        "change_amount": change_amount,
+        "change_pct": change_pct,
+        "volume": volume,
+        "market_cap": market_cap,
+        "as_of": traded_at,
+    }
+
+
+def fetch_naver_krx_market_movers(direction: str, limit: int) -> list[dict[str, Any]]:
+    route = "up" if direction == "gainers" else "down"
+    fetch_count = max(50, min(limit * 10, 100))
+    rows: list[dict[str, Any]] = []
+
+    for category in ("KOSPI", "KOSDAQ"):
+        response = requests.get(
+            f"https://m.stock.naver.com/api/stocks/{route}/{category}",
+            params={"page": 1, "pageSize": fetch_count},
+            headers={"User-Agent": "Mozilla/5.0 (compatible; QuantInvestor/1.0)"},
+            timeout=8,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        for raw in payload.get("stocks") or []:
+            if not isinstance(raw, dict):
+                continue
+            normalized = normalize_naver_krx_market_mover(raw)
+            if normalized is None:
+                continue
+            if normalized["market_cap"] < 100_000_000_000 or normalized["volume"] <= 10_000:
+                continue
+            if direction == "gainers" and normalized["change_pct"] <= 0:
+                continue
+            if direction == "losers" and normalized["change_pct"] >= 0:
+                continue
+            rows.append(normalized)
+
+    rows.sort(key=lambda item: float(item["change_pct"]), reverse=direction == "gainers")
+    return rows[:limit]
+
+
 def fetch_market_movers(market: str, direction: str, limit: int) -> list[dict[str, Any]]:
+    if market == "krx":
+        return fetch_naver_krx_market_movers(direction, limit)
+
     query = build_market_mover_query(market, direction)
     fetch_count = max(25, min(limit * 3, 100))
     if isinstance(query, str):
@@ -2818,6 +3003,15 @@ def fetch_market_movers(market: str, direction: str, limit: int) -> list[dict[st
     return rows[:limit]
 
 
+def build_stale_market_movers_snapshot(cached_result: dict[str, Any]) -> dict[str, Any]:
+    stale_result = cached_result.copy()
+    stale_result["is_stale"] = True
+    status_text = str(stale_result.get("snapshot_status") or "최근 거래일 기준")
+    if "이전 데이터" not in status_text:
+        stale_result["snapshot_status"] = f"{status_text} · 이전 데이터"
+    return stale_result
+
+
 def create_market_movers_snapshot(market: str, limit: int = 10) -> dict[str, Any]:
     normalized_market = normalize_market(market)
     bounded_limit = max(1, min(int(limit), 20))
@@ -2827,38 +3021,65 @@ def create_market_movers_snapshot(market: str, limit: int = 10) -> dict[str, Any
     if cached and now_timestamp - cached[0] < MARKET_MOVERS_CACHE_SECONDS:
         return cached[1]
 
-    try:
-        gainers = fetch_market_movers(normalized_market, "gainers", bounded_limit)
-        losers = fetch_market_movers(normalized_market, "losers", bounded_limit)
-    except Exception as exc:
-        logger.warning("Market movers lookup failed for %s", normalized_market, exc_info=True)
-        raise HTTPException(status_code=503, detail="급등·급락 종목 데이터를 가져오지 못했습니다. 잠시 후 다시 시도해 주세요.") from exc
+    with MARKET_MOVERS_CACHE_LOCK:
+        now_timestamp = datetime.now().timestamp()
+        cached = MARKET_MOVERS_CACHE.get(cache_key)
+        if cached and now_timestamp - cached[0] < MARKET_MOVERS_CACHE_SECONDS:
+            return cached[1]
 
-    if not gainers and not losers:
-        raise HTTPException(status_code=503, detail="표시할 급등·급락 종목이 없습니다.")
+        last_failure = MARKET_MOVERS_FAILURE_CACHE.get(cache_key)
+        if last_failure is not None and now_timestamp - last_failure < MARKET_MOVERS_FAILURE_CACHE_SECONDS:
+            if cached and now_timestamp - cached[0] < MARKET_MOVERS_STALE_CACHE_SECONDS:
+                return build_stale_market_movers_snapshot(cached[1])
+            raise HTTPException(
+                status_code=503,
+                detail="급등·급락 데이터 제공사가 요청을 제한하고 있습니다. 잠시 후 다시 시도해 주세요.",
+            )
 
-    all_rows = [*gainers, *losers]
-    as_of = max((item["as_of"] for item in all_rows), default=datetime.now(MARKET_TIMEZONES[normalized_market]).isoformat())
-    snapshot_status, intraday_estimate = describe_sector_snapshot_status(normalized_market)
-    universe_note = (
-        "NASDAQ·NYSE 상장 보통주 중 주가 5달러·시가총액 20억달러 이상"
-        if normalized_market == "us"
-        else "KOSPI·KOSDAQ 상장 종목 중 시가총액 1천억원·거래량 1만주 이상"
-    )
-    result = normalize_value(
-        {
-            "market": normalized_market,
-            "market_name": sector_market_name(normalized_market),
-            "as_of": as_of,
-            "snapshot_status": snapshot_status,
-            "intraday_estimate": intraday_estimate,
-            "universe_note": universe_note,
-            "gainers": gainers,
-            "losers": losers,
-        }
-    )
-    MARKET_MOVERS_CACHE[cache_key] = (now_timestamp, result)
-    return result
+        try:
+            gainers = fetch_market_movers(normalized_market, "gainers", bounded_limit)
+            losers = fetch_market_movers(normalized_market, "losers", bounded_limit)
+        except Exception as exc:
+            MARKET_MOVERS_FAILURE_CACHE[cache_key] = now_timestamp
+            logger.warning("Market movers lookup failed for %s", normalized_market, exc_info=True)
+            if cached and now_timestamp - cached[0] < MARKET_MOVERS_STALE_CACHE_SECONDS:
+                return build_stale_market_movers_snapshot(cached[1])
+            raise HTTPException(
+                status_code=503,
+                detail="급등·급락 종목 데이터를 가져오지 못했습니다. 잠시 후 다시 시도해 주세요.",
+            ) from exc
+
+        if not gainers and not losers:
+            MARKET_MOVERS_FAILURE_CACHE[cache_key] = now_timestamp
+            if cached and now_timestamp - cached[0] < MARKET_MOVERS_STALE_CACHE_SECONDS:
+                return build_stale_market_movers_snapshot(cached[1])
+            raise HTTPException(status_code=503, detail="표시할 급등·급락 종목이 없습니다.")
+
+        all_rows = [*gainers, *losers]
+        as_of = max((item["as_of"] for item in all_rows), default=datetime.now(MARKET_TIMEZONES[normalized_market]).isoformat())
+        snapshot_status, intraday_estimate = describe_sector_snapshot_status(normalized_market)
+        universe_note = (
+            "NASDAQ·NYSE 상장 보통주 중 주가 5달러·시가총액 20억달러 이상"
+            if normalized_market == "us"
+            else "KOSPI·KOSDAQ 상장 종목 중 시가총액 1천억원·거래량 1만주 이상"
+        )
+        result = normalize_value(
+            {
+                "market": normalized_market,
+                "market_name": sector_market_name(normalized_market),
+                "as_of": as_of,
+                "snapshot_status": snapshot_status,
+                "intraday_estimate": intraday_estimate,
+                "universe_note": universe_note,
+                "is_stale": False,
+                "data_source": "naver_finance" if normalized_market == "krx" else "yahoo_finance",
+                "gainers": gainers,
+                "losers": losers,
+            }
+        )
+        MARKET_MOVERS_CACHE[cache_key] = (now_timestamp, result)
+        MARKET_MOVERS_FAILURE_CACHE.pop(cache_key, None)
+        return result
 
 
 def previous_business_day(target: date) -> date:

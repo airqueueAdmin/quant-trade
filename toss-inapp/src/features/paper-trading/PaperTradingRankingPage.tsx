@@ -16,6 +16,8 @@ import {
   type AppSession,
 } from '../../shared/session/appSession'
 
+const RANKING_REFRESH_INTERVAL_MS = 60_000
+
 function formatKrw(value?: number | null) {
   if (value === undefined || value === null) {
     return '-'
@@ -111,6 +113,20 @@ export function PaperTradingRankingPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [refreshToken, setRefreshToken] = useState(0)
+
+  useEffect(() => {
+    const refreshVisibleRanking = () => {
+      if (document.visibilityState === 'visible') {
+        setRefreshToken((value) => value + 1)
+      }
+    }
+    const intervalId = window.setInterval(refreshVisibleRanking, RANKING_REFRESH_INTERVAL_MS)
+    document.addEventListener('visibilitychange', refreshVisibleRanking)
+    return () => {
+      window.clearInterval(intervalId)
+      document.removeEventListener('visibilitychange', refreshVisibleRanking)
+    }
+  }, [])
 
   useEffect(() => {
     const abortController = new AbortController()
@@ -363,9 +379,12 @@ export function PaperTradingRankingPage() {
             ) : null}
 
             <p className="ranking-board__as-of">
-              {formatAsOf(ranking.as_of)} 기준
+              {formatAsOf(ranking.as_of)} 기준 · 1분마다 자동 갱신
               {ranking.entries.some((entry) => entry.valuation_status === 'partial')
                 ? ' · 일부 종목은 평균 매입가로 계산했어요.'
+                : ''}
+              {ranking.entries.some((entry) => entry.valuation_status === 'stale')
+                ? ' · 일부 종목은 최근 정상 시세로 계산했어요.'
                 : ''}
             </p>
           </section>

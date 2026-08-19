@@ -46,6 +46,26 @@ class USStockSearchTests(unittest.TestCase):
 
         self.assertEqual(result[0]["ticker"], "NVDA")
 
+    @patch.object(data_provider.yf, "Search", side_effect=RuntimeError("rate limited"), create=True)
+    def test_search_supports_added_technology_stocks_and_aliases(self, _mocked_search) -> None:
+        expectations = {
+            "브로드컴": "AVGO",
+            "마이크론": "MU",
+            "TSMC": "TSM",
+            "팔란티어": "PLTR",
+            "서비스나우": "NOW",
+            "팔로알토": "PANW",
+        }
+
+        for query, ticker in expectations.items():
+            with self.subTest(query=query):
+                result = data_provider.search_us_stocks(query, limit=10)
+                self.assertEqual(result[0]["ticker"], ticker)
+
+    def test_popular_us_stock_tickers_are_unique(self) -> None:
+        tickers = [item["ticker"] for item in data_provider.POPULAR_US_STOCKS]
+        self.assertEqual(len(tickers), len(set(tickers)))
+
 
 if __name__ == "__main__":
     unittest.main()

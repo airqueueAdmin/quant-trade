@@ -6,6 +6,10 @@ import main
 
 class PaperTradingRankingTests(unittest.TestCase):
     def setUp(self) -> None:
+        main.PAPER_RANKING_QUOTE_CACHE.clear()
+        main.PAPER_RANKING_QUOTE_FAILURE_CACHE.clear()
+        main.PAPER_RANKING_FX_CACHE = None
+        main.PAPER_RANKING_FX_LAST_FAILURE = None
         self.accounts = [
             {
                 "account_id": "paper-alpha",
@@ -88,6 +92,49 @@ class PaperTradingRankingTests(unittest.TestCase):
         mine = result["my_entry"]
         self.assertEqual(mine["total_assets_krw"], 10_000_000)
         self.assertEqual(mine["valuation_status"], "partial")
+
+    def test_marks_recent_cached_quote_as_stale(self) -> None:
+        quotes = {("005930", "kospi"): {"close": 60_000, "_ranking_stale": True}}
+
+        result = main.build_paper_trading_leaderboard(
+            [self.accounts[0]],
+            [self.positions[0]],
+            quotes,
+            "paper-alpha",
+        )
+
+        self.assertEqual(result["my_entry"]["total_assets_krw"], 11_000_000)
+        self.assertEqual(result["my_entry"]["valuation_status"], "stale")
+
+    @patch.object(main, "create_quote_snapshot")
+    def test_quote_cache_uses_stale_value_and_failure_cooldown(self, create_quote) -> None:
+        create_quote.return_value = {"close": 60_000}
+        fresh = main.get_paper_ranking_quote("krx", "005930", "kospi")
+        self.assertEqual(fresh["close"], 60_000)
+
+        cache_key = ("krx", "005930", "kospi")
+        _, cached_quote = main.PAPER_RANKING_QUOTE_CACHE[cache_key]
+        main.PAPER_RANKING_QUOTE_CACHE[cache_key] = (
+            main.datetime.now().timestamp() - main.PAPER_RANKING_QUOTE_CACHE_SECONDS - 1,
+            cached_quote,
+        )
+        create_quote.side_effect = RuntimeError("rate limited")
+
+        stale = main.get_paper_ranking_quote("krx", "005930", "kospi")
+        stale_again = main.get_paper_ranking_quote("krx", "005930", "kospi")
+
+        self.assertTrue(stale["_ranking_stale"])
+        self.assertTrue(stale_again["_ranking_stale"])
+        self.assertEqual(create_quote.call_count, 2)
+
+    @patch.object(main, "get_usdkrw_snapshot", return_value={"rate": 1400})
+    def test_ranking_fx_rate_is_cached(self, get_fx) -> None:
+        first = main.get_paper_ranking_usdkrw_rate()
+        second = main.get_paper_ranking_usdkrw_rate()
+
+        self.assertEqual(first, (1400, False))
+        self.assertEqual(second, (1400, False))
+        self.assertEqual(get_fx.call_count, 1)
 
     def test_profile_is_stable_and_does_not_reveal_account_id(self) -> None:
         first = main.build_paper_ranking_profile("paper-secret-account")

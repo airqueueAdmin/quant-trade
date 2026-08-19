@@ -12,6 +12,8 @@ import {
   type AppSession,
 } from '../../shared/session/appSession'
 
+const RANKING_REFRESH_INTERVAL_MS = 60_000
+
 function formatPct(value: number) {
   return `${value >= 0 ? '+' : ''}${value.toFixed(2)}%`
 }
@@ -40,6 +42,20 @@ export function HomeRankingCard() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [refreshToken, setRefreshToken] = useState(0)
+
+  useEffect(() => {
+    const refreshVisibleRanking = () => {
+      if (document.visibilityState === 'visible') {
+        setRefreshToken((value) => value + 1)
+      }
+    }
+    const intervalId = window.setInterval(refreshVisibleRanking, RANKING_REFRESH_INTERVAL_MS)
+    document.addEventListener('visibilitychange', refreshVisibleRanking)
+    return () => {
+      window.clearInterval(intervalId)
+      document.removeEventListener('visibilitychange', refreshVisibleRanking)
+    }
+  }, [])
 
   useEffect(() => {
     const abortController = new AbortController()

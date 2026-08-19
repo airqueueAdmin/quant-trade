@@ -209,6 +209,8 @@ export type MarketMoversSnapshot = {
   snapshot_status: string
   intraday_estimate: boolean
   universe_note: string
+  is_stale: boolean
+  data_source: 'naver_finance' | 'yahoo_finance'
   gainers: MarketMover[]
   losers: MarketMover[]
 }
@@ -268,7 +270,7 @@ export type PaperTradingRankingEntry = {
     allocation_pct: number
   } | null
   updated_at?: string | null
-  valuation_status: 'complete' | 'partial'
+  valuation_status: 'complete' | 'stale' | 'partial'
 }
 
 export type PaperTradingRankingResponse = {
