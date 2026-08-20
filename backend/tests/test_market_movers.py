@@ -1,5 +1,6 @@
 import unittest
 from datetime import datetime
+from tempfile import TemporaryDirectory
 from unittest.mock import MagicMock, patch
 
 import main
@@ -55,8 +56,18 @@ def naver_response(*rows: dict) -> MagicMock:
 
 class MarketMoversTests(unittest.TestCase):
     def setUp(self) -> None:
+        self.cache_directory = TemporaryDirectory()
+        self.cache_directory_patch = patch.object(
+            main,
+            "MARKET_MOVERS_DISK_CACHE_DIR",
+            self.cache_directory.name,
+        )
+        self.cache_directory_patch.start()
+        self.addCleanup(self.cache_directory_patch.stop)
+        self.addCleanup(self.cache_directory.cleanup)
         main.MARKET_MOVERS_CACHE.clear()
         main.MARKET_MOVERS_FAILURE_CACHE.clear()
+        main.MARKET_MOVERS_REFRESHING.clear()
 
     @patch.object(main.yf, "screen")
     def test_us_snapshot_contains_sorted_gainers_and_losers(self, screen) -> None:
@@ -109,8 +120,8 @@ class MarketMoversTests(unittest.TestCase):
         self.assertTrue(all("/api/stocks/up/" in call.args[0] for call in requests_get.call_args_list))
         screen.assert_not_called()
 
-    @patch.object(main, "fetch_market_movers", side_effect=RuntimeError("rate limited"))
-    def test_snapshot_returns_stale_success_cache_when_refresh_fails(self, fetch_movers) -> None:
+    @patch.object(main, "start_market_movers_refresh")
+    def test_snapshot_returns_stale_success_cache_while_refresh_starts(self, start_refresh) -> None:
         cached = {
             "market": "us",
             "market_name": "미국",
@@ -129,7 +140,7 @@ class MarketMoversTests(unittest.TestCase):
 
         self.assertTrue(result["is_stale"])
         self.assertIn("이전 데이터", result["snapshot_status"])
-        self.assertEqual(fetch_movers.call_count, 1)
+        start_refresh.assert_called_once_with("us", 2, "us:2")
 
     @patch.object(main, "fetch_market_movers", side_effect=RuntimeError("rate limited"))
     def test_snapshot_failure_cooldown_prevents_repeated_provider_calls(self, fetch_movers) -> None:
@@ -139,6 +150,43 @@ class MarketMoversTests(unittest.TestCase):
             main.create_market_movers_snapshot("us", 3)
 
         self.assertEqual(fetch_movers.call_count, 1)
+
+    @patch.object(main.yf, "screen")
+    def test_success_snapshot_survives_memory_cache_reset(self, screen) -> None:
+        screen.side_effect = [
+            {"quotes": [quote("GAIN1", "Gainer One", 8.0, 54.0)]},
+            {"quotes": [quote("LOSE1", "Loser One", -5.0, 19.0)]},
+        ]
+        first = main.create_market_movers_snapshot("us", 1)
+        main.MARKET_MOVERS_CACHE.clear()
+
+        second = main.create_market_movers_snapshot("us", 1)
+
+        self.assertEqual(second, first)
+        self.assertEqual(screen.call_count, 2)
+
+    @patch.object(main, "fetch_market_movers_snapshot")
+    def test_background_refresh_replaces_stale_snapshot(self, fetch_snapshot) -> None:
+        fresh = {
+            "market": "us",
+            "market_name": "미국",
+            "as_of": "2026-08-20T09:00:00-04:00",
+            "snapshot_status": "최근 거래일 기준",
+            "intraday_estimate": False,
+            "universe_note": "test",
+            "is_stale": False,
+            "data_source": "yahoo_finance",
+            "gainers": [],
+            "losers": [],
+        }
+        fetch_snapshot.return_value = fresh
+        main.MARKET_MOVERS_REFRESHING.add("us:3")
+
+        main.refresh_market_movers_snapshot("us", 3, "us:3")
+
+        self.assertEqual(main.MARKET_MOVERS_CACHE["us:3"][1], fresh)
+        self.assertNotIn("us:3", main.MARKET_MOVERS_REFRESHING)
+        self.assertNotIn("us:3", main.MARKET_MOVERS_FAILURE_CACHE)
 
 
 if __name__ == "__main__":

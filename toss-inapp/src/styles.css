@@ -125,6 +125,125 @@ select {
   padding-bottom: calc(118px + env(safe-area-inset-bottom, 0px));
 }
 
+.backend-warmup {
+  margin: 12px 20px 0;
+  padding: 16px;
+  border: 1px solid rgba(49, 130, 246, 0.14);
+  border-radius: 22px;
+  background:
+    radial-gradient(circle at top right, rgba(49, 130, 246, 0.14), transparent 42%),
+    #ffffff;
+  box-shadow: 0 12px 30px rgba(49, 130, 246, 0.1);
+  animation: backend-warmup-enter 180ms ease-out;
+}
+
+.backend-warmup__status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.backend-warmup__status > span {
+  display: inline-flex;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: #e8f3ff;
+  color: #1b64da;
+  font-size: 17px;
+  font-weight: 900;
+}
+
+.backend-warmup--warming .backend-warmup__status > span::before {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: #3182f6;
+  box-shadow: 0 0 0 0 rgba(49, 130, 246, 0.34);
+  content: '';
+  animation: backend-warmup-pulse 1.4s infinite;
+}
+
+.backend-warmup__status > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.backend-warmup__status strong {
+  font-size: 15px;
+}
+
+.backend-warmup__status small {
+  color: #6b7684;
+  font-size: 12px;
+}
+
+.backend-warmup__check {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid #eef2f6;
+}
+
+.backend-warmup__check > p:first-child {
+  margin: 0;
+  color: #333d4b;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.backend-warmup__choices {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+  margin-top: 10px;
+}
+
+.backend-warmup__choice {
+  min-width: 0;
+  padding: 9px 6px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: #f2f4f6;
+  color: #4e5968;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.backend-warmup__choice--selected {
+  border-color: rgba(49, 130, 246, 0.28);
+  background: #e8f3ff;
+  color: #1b64da;
+}
+
+.backend-warmup__answer {
+  margin: 10px 0 0;
+  color: #6b7684;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.backend-warmup__answer b {
+  color: #333d4b;
+}
+
+.backend-warmup__answer--correct b {
+  color: #087443;
+}
+
+@keyframes backend-warmup-enter {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes backend-warmup-pulse {
+  70% { box-shadow: 0 0 0 8px rgba(49, 130, 246, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(49, 130, 246, 0); }
+}
+
 .banner-ad {
   width: 100%;
   overflow: hidden;

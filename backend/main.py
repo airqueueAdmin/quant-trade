@@ -10,7 +10,7 @@ import secrets
 import smtplib
 import ssl
 import tempfile
-from threading import Lock
+from threading import Lock, Thread
 from typing import Any, Iterable
 import json
 from zoneinfo import ZoneInfo
@@ -158,11 +158,16 @@ SMTP_FROM_EMAIL = (os.getenv("SMTP_FROM_EMAIL") or SMTP_USERNAME or "").strip()
 SMTP_USE_TLS = (os.getenv("SMTP_USE_TLS") or "true").strip().lower() not in {"0", "false", "no"}
 NOTIFICATION_DISPATCH_TOKEN = (os.getenv("NOTIFICATION_DISPATCH_TOKEN") or "").strip()
 MARKET_MOVERS_CACHE_SECONDS = 300
-MARKET_MOVERS_STALE_CACHE_SECONDS = 3600
+# A previous trading-day snapshot is still more useful than a hard failure when
+# Yahoo temporarily throttles its screener.  Seven days also spans long market
+# weekends while the UI clearly labels the response as stale.
+MARKET_MOVERS_STALE_CACHE_SECONDS = 7 * 24 * 60 * 60
 MARKET_MOVERS_FAILURE_CACHE_SECONDS = 60
 MARKET_MOVERS_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 MARKET_MOVERS_FAILURE_CACHE: dict[str, float] = {}
 MARKET_MOVERS_CACHE_LOCK = Lock()
+MARKET_MOVERS_REFRESHING: set[str] = set()
+MARKET_MOVERS_DISK_CACHE_DIR = os.path.join(os.path.dirname(__file__), ".cache", "market_movers")
 PAPER_RANKING_QUOTE_CACHE_SECONDS = 30
 PAPER_RANKING_QUOTE_STALE_CACHE_SECONDS = 900
 PAPER_RANKING_QUOTE_FAILURE_CACHE_SECONDS = 60
@@ -3003,13 +3008,179 @@ def fetch_market_movers(market: str, direction: str, limit: int) -> list[dict[st
     return rows[:limit]
 
 
-def build_stale_market_movers_snapshot(cached_result: dict[str, Any]) -> dict[str, Any]:
+def market_movers_disk_cache_path(cache_key: str) -> str:
+    safe_key = "".join(character if character.isalnum() or character in {"-", "_"} else "-" for character in cache_key)
+    return os.path.join(MARKET_MOVERS_DISK_CACHE_DIR, f"{safe_key}.json")
+
+
+def persist_market_movers_snapshot(cache_key: str, cached_at: float, result: dict[str, Any]) -> None:
+    """Persist the latest successful snapshot so a process cold start has a fallback."""
+    try:
+        os.makedirs(MARKET_MOVERS_DISK_CACHE_DIR, exist_ok=True)
+        target_path = market_movers_disk_cache_path(cache_key)
+        file_descriptor, temporary_path = tempfile.mkstemp(
+            prefix="market-movers-",
+            suffix=".tmp",
+            dir=MARKET_MOVERS_DISK_CACHE_DIR,
+        )
+        try:
+            with os.fdopen(file_descriptor, "w", encoding="utf-8") as cache_file:
+                json.dump(
+                    {"cached_at": cached_at, "snapshot": result},
+                    cache_file,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+            os.replace(temporary_path, target_path)
+        except Exception:
+            try:
+                os.unlink(temporary_path)
+            except OSError:
+                pass
+            raise
+    except Exception:
+        # Cache persistence must never turn a successful provider response into
+        # a failed API response.
+        logger.warning("Market movers disk cache write failed for %s", cache_key, exc_info=True)
+
+
+def load_persisted_market_movers_snapshot(
+    cache_key: str,
+    market: str,
+) -> tuple[float, dict[str, Any]] | None:
+    """Load the newest usable snapshot, including one saved for another limit."""
+    exact_path = market_movers_disk_cache_path(cache_key)
+    candidate_paths = [exact_path]
+    try:
+        if os.path.isdir(MARKET_MOVERS_DISK_CACHE_DIR):
+            market_prefix = f"{market}-"
+            alternatives = [
+                os.path.join(MARKET_MOVERS_DISK_CACHE_DIR, filename)
+                for filename in os.listdir(MARKET_MOVERS_DISK_CACHE_DIR)
+                if filename.startswith(market_prefix) and filename.endswith(".json")
+            ]
+            alternatives.sort(key=os.path.getmtime, reverse=True)
+            candidate_paths.extend(path for path in alternatives if path != exact_path)
+    except OSError:
+        return None
+
+    now_timestamp = datetime.now().timestamp()
+    for candidate_path in candidate_paths:
+        try:
+            with open(candidate_path, "r", encoding="utf-8") as cache_file:
+                envelope = json.load(cache_file)
+            cached_at = float(envelope.get("cached_at") or 0)
+            snapshot = envelope.get("snapshot")
+            if (
+                cached_at <= 0
+                or now_timestamp - cached_at >= MARKET_MOVERS_STALE_CACHE_SECONDS
+                or not isinstance(snapshot, dict)
+                or snapshot.get("market") != market
+                or not isinstance(snapshot.get("gainers"), list)
+                or not isinstance(snapshot.get("losers"), list)
+            ):
+                continue
+            if candidate_path != exact_path:
+                # A snapshot saved for a smaller list is useful immediately,
+                # but it still needs a background refresh for the requested
+                # limit instead of pretending to be a complete fresh result.
+                cached_at = min(cached_at, now_timestamp - MARKET_MOVERS_CACHE_SECONDS)
+            return cached_at, snapshot
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            continue
+    return None
+
+
+def build_stale_market_movers_snapshot(
+    cached_result: dict[str, Any],
+    cached_age_seconds: float | None = None,
+) -> dict[str, Any]:
     stale_result = cached_result.copy()
     stale_result["is_stale"] = True
+    if cached_age_seconds is not None:
+        stale_result["cache_age_seconds"] = max(0, round(cached_age_seconds))
     status_text = str(stale_result.get("snapshot_status") or "최근 거래일 기준")
     if "이전 데이터" not in status_text:
         stale_result["snapshot_status"] = f"{status_text} · 이전 데이터"
     return stale_result
+
+
+def fetch_market_movers_snapshot(market: str, limit: int) -> dict[str, Any]:
+    gainers = fetch_market_movers(market, "gainers", limit)
+    losers = fetch_market_movers(market, "losers", limit)
+    if not gainers and not losers:
+        raise ValueError("No market movers returned by provider")
+
+    all_rows = [*gainers, *losers]
+    as_of = max((item["as_of"] for item in all_rows), default=datetime.now(MARKET_TIMEZONES[market]).isoformat())
+    snapshot_status, intraday_estimate = describe_sector_snapshot_status(market)
+    universe_note = (
+        "NASDAQ·NYSE 상장 보통주 중 주가 5달러·시가총액 20억달러 이상"
+        if market == "us"
+        else "KOSPI·KOSDAQ 상장 종목 중 시가총액 1천억원·거래량 1만주 이상"
+    )
+    return normalize_value(
+        {
+            "market": market,
+            "market_name": sector_market_name(market),
+            "as_of": as_of,
+            "snapshot_status": snapshot_status,
+            "intraday_estimate": intraday_estimate,
+            "universe_note": universe_note,
+            "is_stale": False,
+            "data_source": "naver_finance" if market == "krx" else "yahoo_finance",
+            "gainers": gainers,
+            "losers": losers,
+        }
+    )
+
+
+def store_market_movers_snapshot(cache_key: str, result: dict[str, Any]) -> None:
+    completed_timestamp = datetime.now().timestamp()
+    with MARKET_MOVERS_CACHE_LOCK:
+        MARKET_MOVERS_CACHE[cache_key] = (completed_timestamp, result)
+        MARKET_MOVERS_FAILURE_CACHE.pop(cache_key, None)
+    persist_market_movers_snapshot(cache_key, completed_timestamp, result)
+
+
+def refresh_market_movers_snapshot(market: str, limit: int, cache_key: str) -> None:
+    """Refresh one stale snapshot without holding up the API response."""
+    try:
+        result = fetch_market_movers_snapshot(market, limit)
+        store_market_movers_snapshot(cache_key, result)
+    except Exception:
+        with MARKET_MOVERS_CACHE_LOCK:
+            MARKET_MOVERS_FAILURE_CACHE[cache_key] = datetime.now().timestamp()
+        logger.warning("Background market movers refresh failed for %s", market, exc_info=True)
+    finally:
+        with MARKET_MOVERS_CACHE_LOCK:
+            MARKET_MOVERS_REFRESHING.discard(cache_key)
+
+
+def start_market_movers_refresh(market: str, limit: int, cache_key: str) -> bool:
+    """Start at most one provider refresh per cache key and cooldown window."""
+    with MARKET_MOVERS_CACHE_LOCK:
+        now_timestamp = datetime.now().timestamp()
+        last_failure = MARKET_MOVERS_FAILURE_CACHE.get(cache_key)
+        if cache_key in MARKET_MOVERS_REFRESHING:
+            return False
+        if last_failure is not None and now_timestamp - last_failure < MARKET_MOVERS_FAILURE_CACHE_SECONDS:
+            return False
+        MARKET_MOVERS_REFRESHING.add(cache_key)
+
+    try:
+        Thread(
+            target=refresh_market_movers_snapshot,
+            args=(market, limit, cache_key),
+            name=f"market-movers-{cache_key}",
+            daemon=True,
+        ).start()
+    except Exception:
+        with MARKET_MOVERS_CACHE_LOCK:
+            MARKET_MOVERS_REFRESHING.discard(cache_key)
+        logger.warning("Market movers background refresh could not start for %s", market, exc_info=True)
+        return False
+    return True
 
 
 def create_market_movers_snapshot(market: str, limit: int = 10) -> dict[str, Any]:
@@ -3017,69 +3188,44 @@ def create_market_movers_snapshot(market: str, limit: int = 10) -> dict[str, Any
     bounded_limit = max(1, min(int(limit), 20))
     cache_key = f"{normalized_market}:{bounded_limit}"
     now_timestamp = datetime.now().timestamp()
-    cached = MARKET_MOVERS_CACHE.get(cache_key)
+
+    with MARKET_MOVERS_CACHE_LOCK:
+        cached = MARKET_MOVERS_CACHE.get(cache_key)
+    if cached is None:
+        persisted = load_persisted_market_movers_snapshot(cache_key, normalized_market)
+        if persisted is not None:
+            with MARKET_MOVERS_CACHE_LOCK:
+                MARKET_MOVERS_CACHE[cache_key] = persisted
+            cached = persisted
+
     if cached and now_timestamp - cached[0] < MARKET_MOVERS_CACHE_SECONDS:
         return cached[1]
 
+    if cached and now_timestamp - cached[0] < MARKET_MOVERS_STALE_CACHE_SECONDS:
+        start_market_movers_refresh(normalized_market, bounded_limit, cache_key)
+        return build_stale_market_movers_snapshot(cached[1], now_timestamp - cached[0])
+
     with MARKET_MOVERS_CACHE_LOCK:
-        now_timestamp = datetime.now().timestamp()
-        cached = MARKET_MOVERS_CACHE.get(cache_key)
-        if cached and now_timestamp - cached[0] < MARKET_MOVERS_CACHE_SECONDS:
-            return cached[1]
-
         last_failure = MARKET_MOVERS_FAILURE_CACHE.get(cache_key)
-        if last_failure is not None and now_timestamp - last_failure < MARKET_MOVERS_FAILURE_CACHE_SECONDS:
-            if cached and now_timestamp - cached[0] < MARKET_MOVERS_STALE_CACHE_SECONDS:
-                return build_stale_market_movers_snapshot(cached[1])
-            raise HTTPException(
-                status_code=503,
-                detail="급등·급락 데이터 제공사가 요청을 제한하고 있습니다. 잠시 후 다시 시도해 주세요.",
-            )
-
-        try:
-            gainers = fetch_market_movers(normalized_market, "gainers", bounded_limit)
-            losers = fetch_market_movers(normalized_market, "losers", bounded_limit)
-        except Exception as exc:
-            MARKET_MOVERS_FAILURE_CACHE[cache_key] = now_timestamp
-            logger.warning("Market movers lookup failed for %s", normalized_market, exc_info=True)
-            if cached and now_timestamp - cached[0] < MARKET_MOVERS_STALE_CACHE_SECONDS:
-                return build_stale_market_movers_snapshot(cached[1])
-            raise HTTPException(
-                status_code=503,
-                detail="급등·급락 종목 데이터를 가져오지 못했습니다. 잠시 후 다시 시도해 주세요.",
-            ) from exc
-
-        if not gainers and not losers:
-            MARKET_MOVERS_FAILURE_CACHE[cache_key] = now_timestamp
-            if cached and now_timestamp - cached[0] < MARKET_MOVERS_STALE_CACHE_SECONDS:
-                return build_stale_market_movers_snapshot(cached[1])
-            raise HTTPException(status_code=503, detail="표시할 급등·급락 종목이 없습니다.")
-
-        all_rows = [*gainers, *losers]
-        as_of = max((item["as_of"] for item in all_rows), default=datetime.now(MARKET_TIMEZONES[normalized_market]).isoformat())
-        snapshot_status, intraday_estimate = describe_sector_snapshot_status(normalized_market)
-        universe_note = (
-            "NASDAQ·NYSE 상장 보통주 중 주가 5달러·시가총액 20억달러 이상"
-            if normalized_market == "us"
-            else "KOSPI·KOSDAQ 상장 종목 중 시가총액 1천억원·거래량 1만주 이상"
+    if last_failure is not None and now_timestamp - last_failure < MARKET_MOVERS_FAILURE_CACHE_SECONDS:
+        raise HTTPException(
+            status_code=503,
+            detail="급등·급락 데이터 제공사가 요청을 제한하고 있습니다. 잠시 후 다시 시도해 주세요.",
         )
-        result = normalize_value(
-            {
-                "market": normalized_market,
-                "market_name": sector_market_name(normalized_market),
-                "as_of": as_of,
-                "snapshot_status": snapshot_status,
-                "intraday_estimate": intraday_estimate,
-                "universe_note": universe_note,
-                "is_stale": False,
-                "data_source": "naver_finance" if normalized_market == "krx" else "yahoo_finance",
-                "gainers": gainers,
-                "losers": losers,
-            }
-        )
-        MARKET_MOVERS_CACHE[cache_key] = (now_timestamp, result)
-        MARKET_MOVERS_FAILURE_CACHE.pop(cache_key, None)
-        return result
+
+    try:
+        result = fetch_market_movers_snapshot(normalized_market, bounded_limit)
+    except Exception as exc:
+        with MARKET_MOVERS_CACHE_LOCK:
+            MARKET_MOVERS_FAILURE_CACHE[cache_key] = now_timestamp
+        logger.warning("Market movers lookup failed for %s", normalized_market, exc_info=True)
+        raise HTTPException(
+            status_code=503,
+            detail="급등·급락 종목 데이터를 가져오지 못했습니다. 잠시 후 다시 시도해 주세요.",
+        ) from exc
+
+    store_market_movers_snapshot(cache_key, result)
+    return result
 
 
 def previous_business_day(target: date) -> date:

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 
 import { BannerAd } from '../shared/ads/BannerAd'
+import { BackendWarmupCompanion } from '../shared/api/BackendWarmupCompanion'
 import { env } from '../shared/config/env'
 import { recordDailyRoutineVisit } from '../shared/retention/dailyRoutine'
 
@@ -161,6 +162,8 @@ export function AppLayout() {
             <p className="app-header__eyebrow">한눈투자</p>
           </div>
         </header>
+
+        <BackendWarmupCompanion />
 
         <main className="app-content">
           <Outlet />

@@ -6,8 +6,8 @@ import { WatchlistCard } from './WatchlistCard'
 export function HomePage() {
   return (
     <main className="page-shell home-page">
-      <HomeMarketMoversCard />
       <DailyRoutineCard />
+      <HomeMarketMoversCard />
       <HomeRankingCard />
       <WatchlistCard />
     </main>
