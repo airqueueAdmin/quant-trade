@@ -5,6 +5,8 @@ import {
 } from '@apps-in-toss/web-framework'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+import { trackGrowthEvent } from '../analytics/growthAnalytics'
+
 type ViralPhase = 'idle' | 'opening' | 'active'
 type FeedbackTone = 'neutral' | 'positive' | 'error'
 
@@ -58,6 +60,9 @@ export function ContactsViralCard({ moduleId }: ContactsViralCardProps) {
       return
     }
 
+    trackGrowthEvent('share_started', {
+      placement: 'home',
+    })
     updatePhase('opening')
     setFeedback(null)
 
@@ -106,6 +111,11 @@ export function ContactsViralCard({ moduleId }: ContactsViralCardProps) {
         options: { moduleId: moduleId.trim() },
         onEvent: (event) => {
           if (event.type === 'sendViral') {
+            trackGrowthEvent('share_completed', {
+              placement: 'home',
+              reward_amount: event.data.rewardAmount,
+              reward_unit: event.data.rewardUnit,
+            })
             updateFeedback({
               message: `${event.data.rewardAmount.toLocaleString('ko-KR')} ${event.data.rewardUnit} 리워드가 지급됐어요.`,
               tone: 'positive',
@@ -119,6 +129,10 @@ export function ContactsViralCard({ moduleId }: ContactsViralCardProps) {
               tone: 'neutral',
             })
           } else if (event.data.sentRewardsCount > 0) {
+            trackGrowthEvent('share_session_completed', {
+              placement: 'home',
+              sent_count: event.data.sentRewardsCount,
+            })
             updateFeedback({
               message: `${event.data.sentRewardsCount.toLocaleString('ko-KR')}명에게 공유를 완료했어요.`,
               tone: 'positive',
@@ -134,6 +148,10 @@ export function ContactsViralCard({ moduleId }: ContactsViralCardProps) {
         },
         onError: (error) => {
           logContactsViralError(error)
+          trackGrowthEvent('share_failed', {
+            placement: 'home',
+            reason: 'bridge_error',
+          })
           updateFeedback({
             message: '공유 리워드를 열지 못했어요. 토스 앱 버전과 미니앱 승인 상태를 확인해주세요.',
             tone: 'error',
@@ -150,6 +168,10 @@ export function ContactsViralCard({ moduleId }: ContactsViralCardProps) {
       }
     } catch (error) {
       logContactsViralError(error)
+      trackGrowthEvent('share_failed', {
+        placement: 'home',
+        reason: 'unsupported_runtime',
+      })
       cleanup()
       updatePhase('idle')
       updateFeedback({

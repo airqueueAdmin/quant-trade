@@ -4,6 +4,7 @@ import { appLogin, getAnonymousKey, requestNotificationAgreement } from '@apps-i
 import { GaugeChart } from '../../components/Charts'
 import { StepFlow } from '../../components/StepFlow'
 import { useFullScreenAd } from '../../shared/ads/useFullScreenAd'
+import { trackGrowthEvent } from '../../shared/analytics/growthAnalytics'
 import { apiClient } from '../../shared/api/client'
 import { ApiError } from '../../shared/api/http'
 import type {
@@ -20,6 +21,7 @@ import type {
   SentimentResult,
 } from '../../shared/api/types'
 import { env } from '../../shared/config/env'
+import { recordDailyRoutineCompletion } from '../../shared/retention/dailyRoutine'
 import { clearStoredSession, readStoredSession, writeStoredSession, type AppSession } from '../../shared/session/appSession'
 import { POPULAR_US_STOCKS, usStockToCompany } from '../../shared/stocks/usStocks'
 import { useWatchlist } from '../../shared/watchlist/useWatchlist'
@@ -78,7 +80,17 @@ const SCENARIO_MODIFIERS: Record<(typeof QUICK_SCENARIOS)[number], number> = {
   [QUICK_SCENARIOS[3]]: -6,
 }
 
-const INITIAL_SCORES = {
+type ClosingBetScores = {
+  sectorStrength: number
+  closeStrength: number
+  volumePersistence: number
+  leaderStatus: number
+  newsFollowThrough: number
+  tomorrowCatalyst: number
+  riskControl: number
+}
+
+const INITIAL_SCORES: ClosingBetScores = {
   sectorStrength: 0,
   closeStrength: 0,
   volumePersistence: 0,
@@ -86,7 +98,7 @@ const INITIAL_SCORES = {
   newsFollowThrough: 0,
   tomorrowCatalyst: 0,
   riskControl: 0,
-} as const
+}
 
 const CLOSING_BET_STEPS = [
   {
@@ -640,11 +652,17 @@ export function ClosingBetPage() {
       requestNotificationAgreement({
         options: { templateCode: notificationTemplateCode },
         onEvent: (result) => {
+          trackGrowthEvent('notification_agreement_result', {
+            result: result.type,
+          })
           if (result.type === 'agreementRejected') {
             reject(new Error('사용자가 알림 동의를 거부했습니다.'))
             return
           }
           setNotificationAgreementReady(true)
+          trackGrowthEvent('notification_agreed', {
+            result: result.type,
+          })
           resolve()
         },
         onError: (error) => {
@@ -861,6 +879,12 @@ export function ClosingBetPage() {
         riskControl: deriveRiskControl(quoteResult, matchedSector, sentimentResult, stockResult.rows),
       })
       setCurrentStep(1)
+      recordDailyRoutineCompletion('/closing-bet')
+      trackGrowthEvent('closing_bet_evaluated', {
+        market,
+        krx_exchange: krxExchange,
+        history_row_count: stockResult.rows.length,
+      })
     } catch (caughtError) {
       setError(friendlyApiError(caughtError, '종가베팅 보조 데이터를 불러오지 못했습니다.'))
       resetAnalysis()
@@ -918,6 +942,11 @@ export function ClosingBetPage() {
       })
       await refreshNotificationCenter(session)
       setNotificationMessage('알림을 저장했습니다.')
+      trackGrowthEvent('closing_bet_notification_saved', {
+        channel: notificationChannel,
+        market,
+        threshold_score: Math.round(threshold),
+      })
     } catch (caughtError) {
       setNotificationError(friendlyApiError(caughtError, '알림 구독 저장에 실패했습니다.'))
     } finally {

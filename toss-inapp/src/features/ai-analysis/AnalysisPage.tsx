@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom'
 
 import { GaugeChart } from '../../components/Charts'
 import { StepFlow } from '../../components/StepFlow'
+import { trackGrowthEvent } from '../../shared/analytics/growthAnalytics'
 import { apiClient } from '../../shared/api/client'
 import { ApiError } from '../../shared/api/http'
 import type { KrxExchange, KRXSearchResult, Market, SentimentResult } from '../../shared/api/types'
@@ -13,6 +14,7 @@ import {
   refundAdFreeAnalysisReward,
   useAdFreeAnalysisRewards,
 } from '../../shared/rewards/adFreeAnalysisRewards'
+import { recordDailyRoutineCompletion } from '../../shared/retention/dailyRoutine'
 import { POPULAR_US_STOCKS, usStockToCompany } from '../../shared/stocks/usStocks'
 import { useWatchlist } from '../../shared/watchlist/useWatchlist'
 
@@ -248,6 +250,13 @@ export function AnalysisPage() {
       const response = await apiClient.sentiment(normalizedTicker, market, krxExchange)
       setResult(response)
       setCurrentStep(2)
+      recordDailyRoutineCompletion('/ai-analysis')
+      trackGrowthEvent('ai_analysis_completed', {
+        market,
+        krx_exchange: krxExchange,
+        sentiment_score: response.sentiment_score,
+        used_ad_free_reward: usedAdFreeReward,
+      })
     } catch (caughtError) {
       if (usedAdFreeReward) {
         refundAdFreeAnalysisReward()

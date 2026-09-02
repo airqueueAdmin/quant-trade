@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { getAnonymousKey } from '@apps-in-toss/web-bridge'
 import { Link } from 'react-router-dom'
 
+import { trackGrowthEvent } from '../../shared/analytics/growthAnalytics'
 import { apiClient } from '../../shared/api/client'
 import { ApiError } from '../../shared/api/http'
 import type { PaperTradingRankingResponse } from '../../shared/api/types'
@@ -155,7 +156,11 @@ export function HomeRankingCard() {
               </div>
             </div>
           ) : (
-            <Link className="home-ranking__start" to="/paper-trading">
+            <Link
+              className="home-ranking__start"
+              to="/paper-trading"
+              onClick={() => trackGrowthEvent('paper_trade_start_clicked', { placement: 'home_ranking' })}
+            >
               <span aria-hidden="true">🏁</span>
               <span>
                 <strong>첫 거래 후 내 순위가 생겨요</strong>

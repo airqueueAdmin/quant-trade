@@ -3,9 +3,11 @@ import { Link } from 'react-router-dom'
 
 import { HorizontalBarChart } from '../../components/Charts'
 import { StepFlow } from '../../components/StepFlow'
+import { trackGrowthEvent } from '../../shared/analytics/growthAnalytics'
 import { apiClient } from '../../shared/api/client'
 import { ApiError } from '../../shared/api/http'
 import type { Market, SectorRow, SectorSnapshot } from '../../shared/api/types'
+import { recordDailyRoutineCompletion } from '../../shared/retention/dailyRoutine'
 
 const MARKET_OPTIONS: Array<{ value: Market; label: string }> = [
   { value: 'us', label: '미국주식' },
@@ -110,7 +112,15 @@ export function SectorFlowPage() {
 
       try {
         const result = await apiClient.marketSectors(selectedMarket, abortController.signal)
+        if (abortController.signal.aborted) {
+          return
+        }
         setSnapshot(result)
+        recordDailyRoutineCompletion('/sector-flow')
+        trackGrowthEvent('sector_flow_loaded', {
+          market: selectedMarket,
+          sector_count: result.sectors.length,
+        })
       } catch (caughtError) {
         if (abortController.signal.aborted) {
           return

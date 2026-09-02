@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { getAnonymousKey } from '@apps-in-toss/web-bridge'
 import { Link, useSearchParams } from 'react-router-dom'
 
+import { trackGrowthEvent } from '../../shared/analytics/growthAnalytics'
 import { apiClient } from '../../shared/api/client'
 import { ApiError } from '../../shared/api/http'
 import type { KrxExchange, KRXSearchResult, Market, PaperTradingState, QuoteSnapshot } from '../../shared/api/types'
@@ -526,6 +527,7 @@ export function PaperTradingPage() {
     setActionMessage(null)
 
     try {
+      const isFirstOrder = paperState !== null && paperState.trades.length === 0
       await apiClient.paperTradingOrder(session.sessionToken, {
         ticker: quote.ticker,
         company_name: quote.company_name || quote.ticker,
@@ -535,6 +537,18 @@ export function PaperTradingPage() {
         shares,
       })
       setActionMessage(`${orderSide === 'buy' ? '매수' : '매도'} 주문을 모의 반영했습니다.`)
+      trackGrowthEvent('paper_order_completed', {
+        market,
+        side: orderSide,
+        shares,
+        is_first_order: isFirstOrder,
+      })
+      if (isFirstOrder) {
+        trackGrowthEvent('first_paper_order_completed', {
+          market,
+          side: orderSide,
+        })
+      }
       setRefreshToken((value) => value + 1)
     } catch (caughtError) {
       if (caughtError instanceof ApiError) {

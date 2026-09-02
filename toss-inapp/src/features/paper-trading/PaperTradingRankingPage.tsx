@@ -1,7 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { getAnonymousKey } from '@apps-in-toss/web-bridge'
+import { getTossShareLink, share } from '@apps-in-toss/web-framework'
 import { Link } from 'react-router-dom'
 
+import { trackGrowthEvent } from '../../shared/analytics/growthAnalytics'
 import { apiClient } from '../../shared/api/client'
 import { ApiError } from '../../shared/api/http'
 import type {
@@ -113,6 +115,9 @@ export function PaperTradingRankingPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [refreshToken, setRefreshToken] = useState(0)
+  const [sharingRanking, setSharingRanking] = useState(false)
+  const [shareFeedback, setShareFeedback] = useState<string | null>(null)
+  const rankingViewTrackedRef = useRef(false)
 
   useEffect(() => {
     const refreshVisibleRanking = () => {
@@ -204,6 +209,14 @@ export function PaperTradingRankingPage() {
       try {
         const response = await apiClient.paperTradingRankings(session.sessionToken, sortBy, abortController.signal)
         setRanking(response)
+        if (!rankingViewTrackedRef.current) {
+          rankingViewTrackedRef.current = true
+          trackGrowthEvent('ranking_viewed', {
+            sort_by: sortBy,
+            participant_count: response.participant_count,
+            has_my_entry: Boolean(response.my_entry),
+          })
+        }
       } catch (caughtError) {
         if (abortController.signal.aborted) {
           return
@@ -233,6 +246,37 @@ export function PaperTradingRankingPage() {
   const myPercentile = myEntry && ranking?.participant_count
     ? Math.max(1, Math.ceil((myEntry.rank / ranking.participant_count) * 100))
     : null
+
+  async function handleShareRanking() {
+    if (!myEntry || sharingRanking) {
+      return
+    }
+
+    setSharingRanking(true)
+    setShareFeedback(null)
+    trackGrowthEvent('ranking_share_started', {
+      rank: myEntry.rank,
+      participant_count: ranking?.participant_count ?? 0,
+    })
+
+    try {
+      const tossLink = await getTossShareLink('intoss://glance-invest/paper-trading/rankings')
+      await share({
+        message: `한눈투자 모의투자에서 ${myEntry.rank}위를 기록했어요. 내 투자 감각도 확인해보세요.\n${tossLink}`,
+      })
+      setShareFeedback('공유 화면을 열었어요.')
+      trackGrowthEvent('ranking_share_opened', {
+        rank: myEntry.rank,
+      })
+    } catch {
+      setShareFeedback('순위 공유는 토스 앱에서 이용할 수 있어요.')
+      trackGrowthEvent('ranking_share_failed', {
+        reason: 'share_unavailable',
+      })
+    } finally {
+      setSharingRanking(false)
+    }
+  }
 
   return (
     <main className="page-shell ranking-page">
@@ -278,6 +322,19 @@ export function PaperTradingRankingPage() {
             <span>총 자산 <b>{formatKrw(myEntry.total_assets_krw)}</b></span>
             <span>평균보다 <b>{formatPct(myEntry.total_return_pct - ranking.average_return_pct)}</b></span>
           </div>
+          <button
+            type="button"
+            className="ranking-my-card__share"
+            onClick={() => void handleShareRanking()}
+            disabled={sharingRanking}
+          >
+            {sharingRanking ? '공유 링크 준비 중...' : '내 순위 친구에게 공유하기'}
+          </button>
+          {shareFeedback ? (
+            <p className="ranking-my-card__share-feedback" role="status" aria-live="polite">
+              {shareFeedback}
+            </p>
+          ) : null}
         </section>
       ) : null}
 

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 
+import { trackGrowthEvent } from '../analytics/growthAnalytics'
 import { grantAttendanceReward } from '../rewards/adFreeAnalysisRewards'
 
 const DAILY_ROUTINE_STORAGE_KEY = 'quant.toss_inapp.daily_routine'
@@ -85,10 +86,9 @@ function persistHistory(history: RoutineHistory) {
   window.dispatchEvent(new Event(DAILY_ROUTINE_UPDATED_EVENT))
 }
 
-export function recordDailyRoutineVisit(pathname: string, now = new Date()) {
+export function recordDailyRoutineCompletion(pathname: string, now = new Date()) {
   const history = readHistory()
   if (!isRoutinePath(pathname)) {
-    grantAttendanceReward(calculateStreak(history, now))
     return
   }
 
@@ -99,13 +99,30 @@ export function recordDailyRoutineVisit(pathname: string, now = new Date()) {
     return
   }
 
+  const previouslyCompletedCount = completedPaths.size
   completedPaths.add(pathname)
   const nextHistory = {
     ...history,
     [today]: [...completedPaths],
   }
   persistHistory(nextHistory)
-  grantAttendanceReward(calculateStreak(nextHistory, now))
+  const nextStreak = calculateStreak(nextHistory, now)
+  grantAttendanceReward(nextStreak)
+  trackGrowthEvent('daily_routine_item_completed', {
+    item_path: pathname,
+    completed_count: completedPaths.size,
+    total_count: DAILY_ROUTINE_ITEMS.length,
+    streak_days: nextStreak,
+  })
+
+  if (
+    previouslyCompletedCount < DAILY_ROUTINE_ITEMS.length
+    && completedPaths.size === DAILY_ROUTINE_ITEMS.length
+  ) {
+    trackGrowthEvent('daily_routine_completed', {
+      streak_days: nextStreak,
+    })
+  }
 }
 
 function calculateStreak(history: RoutineHistory, now: Date) {

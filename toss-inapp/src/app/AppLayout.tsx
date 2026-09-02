@@ -2,9 +2,9 @@ import { useEffect, useRef, useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 
 import { BannerAd } from '../shared/ads/BannerAd'
+import { trackScreenView } from '../shared/analytics/growthAnalytics'
 import { BackendWarmupCompanion } from '../shared/api/BackendWarmupCompanion'
 import { env } from '../shared/config/env'
-import { recordDailyRoutineVisit } from '../shared/retention/dailyRoutine'
 
 type NavIconName = 'home' | 'market' | 'ai' | 'event' | 'more'
 
@@ -107,7 +107,7 @@ export function AppLayout() {
   const isMoreRoute = MORE_NAV_ITEMS.some((item) => item.to === location.pathname)
 
   useEffect(() => {
-    recordDailyRoutineVisit(location.pathname)
+    trackScreenView(location.pathname)
     setIsMoreOpen(false)
   }, [location.pathname])
 
