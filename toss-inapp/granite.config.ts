@@ -18,6 +18,12 @@ export default defineConfig({
   webViewProps: {
     type: 'game',
   },
+  navigationBar: {
+    withBackButton: true,
+    withHomeButton: false,
+    withTitle: true,
+    transparentBackground: false,
+  },
   permissions: [],
   outdir: 'dist',
 })
