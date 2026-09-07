@@ -16,7 +16,7 @@ export default defineConfig({
     },
   },
   webViewProps: {
-    type: 'game',
+    type: 'partner',
   },
   navigationBar: {
     withBackButton: true,
