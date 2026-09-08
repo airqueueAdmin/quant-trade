@@ -3,7 +3,10 @@ import { Link } from 'react-router-dom'
 
 import { HorizontalBarChart } from '../../components/Charts'
 import { StepFlow } from '../../components/StepFlow'
-import { trackGrowthEvent } from '../../shared/analytics/growthAnalytics'
+import {
+  trackGrowthEvent,
+  trackReferralActivation,
+} from '../../shared/analytics/growthAnalytics'
 import { apiClient } from '../../shared/api/client'
 import { ApiError } from '../../shared/api/http'
 import type { Market, SectorRow, SectorSnapshot } from '../../shared/api/types'
@@ -120,6 +123,9 @@ export function SectorFlowPage() {
         trackGrowthEvent('sector_flow_loaded', {
           market: selectedMarket,
           sector_count: result.sectors.length,
+        })
+        trackReferralActivation('sector_flow_loaded', {
+          market: selectedMarket,
         })
       } catch (caughtError) {
         if (abortController.signal.aborted) {

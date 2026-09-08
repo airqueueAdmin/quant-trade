@@ -2,7 +2,11 @@ import { useEffect, useRef, useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 
 import { BannerAd } from '../shared/ads/BannerAd'
-import { trackScreenView } from '../shared/analytics/growthAnalytics'
+import {
+  trackReferralLinkOpened,
+  trackReturnVisits,
+  trackScreenView,
+} from '../shared/analytics/growthAnalytics'
 import { BackendWarmupCompanion } from '../shared/api/BackendWarmupCompanion'
 import { env } from '../shared/config/env'
 
@@ -105,6 +109,11 @@ export function AppLayout() {
   const [isMoreOpen, setIsMoreOpen] = useState(false)
   const closeMoreRef = useRef<HTMLButtonElement>(null)
   const isMoreRoute = MORE_NAV_ITEMS.some((item) => item.to === location.pathname)
+
+  useEffect(() => {
+    trackReferralLinkOpened()
+    trackReturnVisits()
+  }, [])
 
   useEffect(() => {
     trackScreenView(location.pathname)

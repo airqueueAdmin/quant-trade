@@ -8,11 +8,18 @@ from zoneinfo import ZoneInfo
 import requests
 import streamlit as st
 
-from ga import inject_google_analytics
+from ga import (
+    inject_google_analytics,
+    track_google_analytics_event,
+    track_google_analytics_event_once,
+    track_referral_activation,
+    track_referral_link_opened,
+)
 from ui_helpers import inject_stage_banner_styles
 
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000")
+GA_MEASUREMENT_ID = os.getenv("GA_MEASUREMENT_ID") or os.getenv("GA_TAG_ID")
 MARKET_OPTIONS = {
     "krx": "국내 증시",
     "us": "미국 증시",
@@ -24,7 +31,8 @@ st.set_page_config(
     layout="wide",
 )
 
-inject_google_analytics(os.getenv("GA_MEASUREMENT_ID") or os.getenv("GA_TAG_ID"), "home")
+inject_google_analytics(GA_MEASUREMENT_ID, "home")
+track_referral_link_opened(GA_MEASUREMENT_ID)
 inject_stage_banner_styles()
 
 
@@ -440,6 +448,11 @@ def render_mover_card(column, item: dict, rank: int, tone: str) -> None:
 
 def open_ai_analysis(item: dict) -> None:
     market = str(item.get("market") or "krx")
+    track_google_analytics_event(
+        GA_MEASUREMENT_ID,
+        "web_cta_clicked",
+        {"target": "ai_analysis", "placement": "market_movers_focus", "market": market},
+    )
     st.session_state["market_input_ai"] = market
     st.session_state["ticker_ai_market"] = market
     st.session_state["ticker_input_ai"] = str(item.get("ticker") or "")
@@ -478,6 +491,23 @@ def render_market_section() -> None:
         return
 
     brief = render_market_pulse(snapshot, market)
+    snapshot_key = f"{market}:{snapshot.get('as_of') or 'unknown'}"
+    track_google_analytics_event_once(
+        GA_MEASUREMENT_ID,
+        "web_market_brief_loaded",
+        snapshot_key,
+        {
+            "market": market,
+            "gainer_count": len(snapshot.get("gainers") or []),
+            "loser_count": len(snapshot.get("losers") or []),
+            "is_stale": bool(snapshot.get("is_stale")),
+        },
+    )
+    track_referral_activation(
+        GA_MEASUREMENT_ID,
+        "market_brief_loaded",
+        {"market": market},
+    )
     gainers = (snapshot.get("gainers") or [])[:3]
     losers = (snapshot.get("losers") or [])[:3]
 
@@ -503,9 +533,19 @@ def render_market_section() -> None:
             open_ai_analysis(focus)
     with action_col2:
         if st.button("주도 섹터 확인", use_container_width=True):
+            track_google_analytics_event(
+                GA_MEASUREMENT_ID,
+                "web_cta_clicked",
+                {"target": "sector_flow", "placement": "market_brief", "market": market},
+            )
             st.switch_page("pages/5_📊_주요_섹터_흐름.py")
     with action_col3:
         if st.button("종가 후보 압축", use_container_width=True):
+            track_google_analytics_event(
+                GA_MEASUREMENT_ID,
+                "web_cta_clicked",
+                {"target": "closing_bet", "placement": "market_brief", "market": market},
+            )
             st.switch_page("pages/6_🎯_종가_베팅.py")
 
     st.markdown(
@@ -547,9 +587,19 @@ def render_investment_journey() -> None:
     start_col, practice_col = st.columns(2)
     with start_col:
         if st.button("AI 시장 분석 시작", type="primary", use_container_width=True):
+            track_google_analytics_event(
+                GA_MEASUREMENT_ID,
+                "web_cta_clicked",
+                {"target": "ai_analysis", "placement": "investment_journey"},
+            )
             st.switch_page("pages/2_🤖_AI_시장_분석.py")
     with practice_col:
         if st.button("모의투자로 대응 연습", use_container_width=True):
+            track_google_analytics_event(
+                GA_MEASUREMENT_ID,
+                "web_cta_clicked",
+                {"target": "paper_trading", "placement": "investment_journey"},
+            )
             st.switch_page("pages/6_🧪_모의_투자.py")
 
 

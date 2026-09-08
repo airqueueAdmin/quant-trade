@@ -3,7 +3,10 @@ import { useSearchParams } from 'react-router-dom'
 
 import { GaugeChart } from '../../components/Charts'
 import { StepFlow } from '../../components/StepFlow'
-import { trackGrowthEvent } from '../../shared/analytics/growthAnalytics'
+import {
+  trackGrowthEvent,
+  trackReferralActivation,
+} from '../../shared/analytics/growthAnalytics'
 import { apiClient } from '../../shared/api/client'
 import { ApiError } from '../../shared/api/http'
 import type { KrxExchange, KRXSearchResult, Market, SentimentResult } from '../../shared/api/types'
@@ -256,6 +259,9 @@ export function AnalysisPage() {
         krx_exchange: krxExchange,
         sentiment_score: response.sentiment_score,
         used_ad_free_reward: usedAdFreeReward,
+      })
+      trackReferralActivation('ai_analysis_completed', {
+        market,
       })
     } catch (caughtError) {
       if (usedAdFreeReward) {

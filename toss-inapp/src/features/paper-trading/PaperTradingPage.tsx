@@ -2,7 +2,10 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { getAnonymousKey } from '@apps-in-toss/web-bridge'
 import { Link, useSearchParams } from 'react-router-dom'
 
-import { trackGrowthEvent } from '../../shared/analytics/growthAnalytics'
+import {
+  trackGrowthEvent,
+  trackReferralActivation,
+} from '../../shared/analytics/growthAnalytics'
 import { apiClient } from '../../shared/api/client'
 import { ApiError } from '../../shared/api/http'
 import type { KrxExchange, KRXSearchResult, Market, PaperTradingState, QuoteSnapshot } from '../../shared/api/types'
@@ -542,6 +545,9 @@ export function PaperTradingPage() {
         side: orderSide,
         shares,
         is_first_order: isFirstOrder,
+      })
+      trackReferralActivation('paper_order_completed', {
+        market,
       })
       if (isFirstOrder) {
         trackGrowthEvent('first_paper_order_completed', {

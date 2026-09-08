@@ -3,7 +3,10 @@ import { getAnonymousKey } from '@apps-in-toss/web-bridge'
 import { getTossShareLink, share } from '@apps-in-toss/web-framework'
 import { Link } from 'react-router-dom'
 
-import { trackGrowthEvent } from '../../shared/analytics/growthAnalytics'
+import {
+  trackGrowthEvent,
+  trackReferralActivation,
+} from '../../shared/analytics/growthAnalytics'
 import { apiClient } from '../../shared/api/client'
 import { ApiError } from '../../shared/api/http'
 import type {
@@ -216,6 +219,9 @@ export function PaperTradingRankingPage() {
             participant_count: response.participant_count,
             has_my_entry: Boolean(response.my_entry),
           })
+          trackReferralActivation('ranking_viewed', {
+            sort_by: sortBy,
+          })
         }
       } catch (caughtError) {
         if (abortController.signal.aborted) {
@@ -260,7 +266,9 @@ export function PaperTradingRankingPage() {
     })
 
     try {
-      const tossLink = await getTossShareLink('intoss://glance-invest/paper-trading/rankings')
+      const tossLink = await getTossShareLink(
+        'intoss://glance-invest/paper-trading/rankings?ref=ranking_share',
+      )
       await share({
         message: `한눈투자 모의투자에서 ${myEntry.rank}위를 기록했어요. 내 투자 감각도 확인해보세요.\n${tossLink}`,
       })
