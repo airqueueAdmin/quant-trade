@@ -1,37 +1,48 @@
 const fallbackBackendUrl = 'http://127.0.0.1:8000'
-const testInterstitialAdGroupId = 'ait-ad-test-interstitial-id'
-const testRewardedAdGroupId = 'ait-ad-test-rewarded-id'
-const testBannerAdGroupId = 'ait-ad-test-banner-id'
+
+function readConfiguredValue(value: unknown) {
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+function readAdGroupId(value: unknown) {
+  const adGroupId = readConfiguredValue(value)
+
+  // Test ad groups must never be embedded in a mini-app bundle. When no
+  // console-issued ID is configured, the ad feature stays disabled.
+  return /(?:^|[-_.])test(?:[-_.]|$)/i.test(adGroupId) ? '' : adGroupId
+}
+
+function readConsoleIdentifier(value: unknown) {
+  const identifier = readConfiguredValue(value)
+
+  // Do not activate a test or placeholder promotion module in any build.
+  return /(?:^|[-_.])test(?:[-_.]|$)|replace[-_ ]?with/i.test(identifier)
+    ? ''
+    : identifier
+}
 
 const configuredInterstitialAdGroupId = (
-  import.meta.env.VITE_INTERSTITIAL_AD_GROUP_ID || ''
-).trim()
+  readAdGroupId(import.meta.env.VITE_INTERSTITIAL_AD_GROUP_ID)
+)
 
 const configuredRewardedAdGroupId = (
-  import.meta.env.VITE_REWARDED_AD_GROUP_ID || ''
-).trim()
+  readAdGroupId(import.meta.env.VITE_REWARDED_AD_GROUP_ID)
+)
 
 const configuredBannerAdGroupId = (
-  import.meta.env.VITE_BANNER_AD_GROUP_ID || ''
-).trim()
+  readAdGroupId(import.meta.env.VITE_BANNER_AD_GROUP_ID)
+)
 
 const configuredContactsViralModuleId = (
-  import.meta.env.VITE_CONTACTS_VIRAL_MODULE_ID || ''
-).trim()
+  readConsoleIdentifier(import.meta.env.VITE_CONTACTS_VIRAL_MODULE_ID)
+)
 
 export const env = {
   backendUrl: (import.meta.env.VITE_BACKEND_URL || fallbackBackendUrl).trim(),
   ads: {
-    // Never use a live ad group while running the local development server.
-    interstitialAdGroupId: import.meta.env.DEV
-      ? testInterstitialAdGroupId
-      : configuredInterstitialAdGroupId,
-    rewardedAdGroupId: import.meta.env.DEV
-      ? testRewardedAdGroupId
-      : configuredRewardedAdGroupId,
-    bannerAdGroupId: import.meta.env.DEV
-      ? testBannerAdGroupId
-      : configuredBannerAdGroupId,
+    interstitialAdGroupId: configuredInterstitialAdGroupId,
+    rewardedAdGroupId: configuredRewardedAdGroupId,
+    bannerAdGroupId: configuredBannerAdGroupId,
   },
   rewards: {
     contactsViralModuleId: configuredContactsViralModuleId,

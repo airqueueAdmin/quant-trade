@@ -71,12 +71,12 @@ AI 분석 화면 진입
   - AI 분석 성공 직후 `analysisAd.showAd()`를 호출한다.
   - 사용자에게 전면 광고가 표시될 수 있음을 안내한다.
 - `src/shared/config/env.ts`
-  - 로컬 개발에서는 전면형·리워드형·배너형 모두 공식 테스트 ID를 사용한다.
-  - production 빌드에서는 각 광고 환경 변수와 공유 리워드 ID를 사용한다.
+  - 환경 변수에 콘솔 발급 광고 그룹 ID가 없으면 광고 기능을 비활성화한다.
+  - production 빌드에서는 각 운영 광고 환경 변수와 공유 리워드 ID를 사용한다.
 - `.env.production`
   - 실제 전면형·배너형 운영 ID가 설정되어 있다.
 - `.env.production.example`, `.env.example`, `README.md`
-  - 광고 환경 변수와 테스트/출시 구분 방법이 기록되어 있다.
+  - 운영 식별자 주입과 테스트/출시 번들 분리 원칙이 기록되어 있다.
 - `package.json`, `package-lock.json`
   - 통합 광고 API 타입을 제공하도록 Apps in Toss SDK를 `2.10.6`으로 업데이트했다.
 
@@ -91,7 +91,7 @@ VITE_BANNER_AD_GROUP_ID=ait.v2.live.373b0109aa644c71
 VITE_CONTACTS_VIRAL_MODULE_ID=6f578343-78b0-4398-b83f-43aaf433b405
 ```
 
-개발과 콘솔 QR 테스트에는 별도로 생성한 `glance-invest-test.ait`만 사용한다.
+개발과 콘솔 QR 테스트는 운영 번들과 분리된 테스트 환경에서만 수행한다.
 실제 광고 ID가 포함된 `glance-invest.ait`로 반복 테스트하면 광고 정책 위반으로 판단될 수 있다.
 
 ## 내일 해야 할 일
@@ -151,7 +151,7 @@ VITE_CONTACTS_VIRAL_MODULE_ID=6f578343-78b0-4398-b83f-43aaf433b405
 - 홈 `기능` 단계에 리워드 광고 CTA 추가
 - `userEarnedReward`가 발생한 경우에만 리워드 완료 안내
 - 닫힘·표시 실패 뒤 다음 리워드 광고 재로드
-- 로컬/QR 테스트용 `ait-ad-test-rewarded-id` 분기와 문서 반영
+- 테스트 광고 ID를 앱 코드에 내장하지 않고 운영 환경 변수로만 주입하도록 정리
 - 변경 파일 대상 엄격 타입 검사 및 `npm run build:web` 성공
 
 실기기 확인 대기:

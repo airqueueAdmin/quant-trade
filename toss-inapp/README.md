@@ -29,32 +29,17 @@ npm run build
 
 환경 변수:
 - `VITE_BACKEND_URL`
-- `VITE_INTERSTITIAL_AD_GROUP_ID`: 운영용 전면 광고 그룹 ID. 로컬 개발에서는 정책에 맞게 공식 테스트 ID를 강제로 사용합니다.
-- `VITE_REWARDED_AD_GROUP_ID`: 운영용 리워드 광고 그룹 ID. 로컬 개발에서는 공식 테스트 리워드 ID를 강제로 사용합니다.
-- `VITE_BANNER_AD_GROUP_ID`: 운영용 리스트형 배너 광고 그룹 ID. 로컬 개발에서는 공식 테스트 ID를 강제로 사용합니다.
+- `VITE_INTERSTITIAL_AD_GROUP_ID`: 앱인토스 콘솔에서 발급한 운영용 전면 광고 그룹 ID.
+- `VITE_REWARDED_AD_GROUP_ID`: 앱인토스 콘솔에서 발급한 운영용 리워드 광고 그룹 ID.
+- `VITE_BANNER_AD_GROUP_ID`: 앱인토스 콘솔에서 발급한 운영용 리스트형 배너 광고 그룹 ID.
 - `VITE_CONTACTS_VIRAL_MODULE_ID`: 앱인토스 콘솔에서 발급한 공유 리워드 ID입니다. 값이 없으면 홈의 공유 리워드 영역을 표시하지 않습니다.
 
 모의투자 계좌는 토스 앱에서 `getAnonymousKey`로 받은 사용자 고유 키를 서버에서 가명화해 연결합니다. 브라우저 개발 환경에서는 기존 기기 세션 계좌로 자동 대체됩니다. 운영 환경의 `APP_SESSION_SECRET`은 계좌 ID 파생과 세션 서명에 함께 사용되므로 반드시 고정된 값으로 관리해야 합니다.
 
-광고 테스트:
-- 로컬 개발 서버는 전면형 `ait-ad-test-interstitial-id`, 리워드형 `ait-ad-test-rewarded-id`, 배너형 `ait-ad-test-banner-id`를 사용합니다.
-- 콘솔 QR 테스트용 production 빌드에서는 세 환경 변수를 공식 테스트 ID로 덮어써서 빌드합니다.
-- 실제 광고 그룹 ID는 출시 빌드에서만 사용합니다. 운영 ID가 비어 있거나 광고가 실패해도 광고 영역을 숨기고 핵심 기능은 계속 동작합니다.
-
-QR 테스트용 번들 생성(PowerShell):
-
-```powershell
-$env:VITE_INTERSTITIAL_AD_GROUP_ID='ait-ad-test-interstitial-id'
-$env:VITE_REWARDED_AD_GROUP_ID='ait-ad-test-rewarded-id'
-$env:VITE_BANNER_AD_GROUP_ID='ait-ad-test-banner-id'
-npm run build
-Move-Item -LiteralPath 'glance-invest.ait' -Destination 'glance-invest-test.ait' -Force
-Remove-Item Env:VITE_INTERSTITIAL_AD_GROUP_ID
-Remove-Item Env:VITE_REWARDED_AD_GROUP_ID
-Remove-Item Env:VITE_BANNER_AD_GROUP_ID
-```
-
-그다음 `npm run build`를 실행하면 `.env.production`의 운영 ID가 들어간 `glance-invest.ait`가 생성됩니다. `glance-invest-test.ait`는 콘솔 QR 검증 전용이고, `glance-invest.ait`는 출시 전용입니다.
+광고 구성:
+- 광고 그룹 ID가 없거나 테스트용으로 식별되면 광고 기능을 비활성화하고 핵심 기능은 계속 동작합니다.
+- 미니앱 번들에는 앱인토스 콘솔에서 발급한 운영 광고 그룹 ID만 포함해야 합니다.
+- 콘솔 QR 검증은 운영 번들과 분리된 테스트 환경에서 진행하고 테스트 키를 운영 번들에 넣지 않습니다.
 
 공유 리워드는 토스 앱 5.223.0 이상과 승인된 미니앱에서만 동작합니다. 샌드박스가 아닌 콘솔 QR로 `sendViral`, `close`, 오류 처리와 뒤로 가기를 확인합니다.
 
