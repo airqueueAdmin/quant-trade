@@ -578,6 +578,10 @@ export function ClosingBetPage() {
   }, [hasAnalysis, scenario, scores])
 
   const tone = hasAnalysis ? scoreTone(totalScore) : 'neutral'
+  const isAnalysisAdPreparing = analysisAd.enabled && analysisAd.status === 'loading'
+  const analysisActionLabel = analysisAd.isReady
+    ? '광고 보고 자동 판정 시작'
+    : '자동 판정 시작'
   const tickerLabel = normalizeTicker(ticker, market) || defaultTicker(market)
   const riskFlags = useMemo(
     () => deriveRiskFlags(stockRows, resolvedSector, sentiment, scenario, scores),
@@ -841,7 +845,9 @@ export function ClosingBetPage() {
       return
     }
 
-    analysisAd.showAd()
+    if (analysisAd.isReady) {
+      analysisAd.showAd()
+    }
     setLoading(true)
     setError(null)
     resetAnalysis()
@@ -1192,19 +1198,30 @@ export function ClosingBetPage() {
             </p>
           </div>
 
+          {analysisAd.enabled ? (
+            <div className="ad-disclosure" role="note">
+              <p className="ad-disclosure__eyebrow">광고 안내</p>
+              <p className="ad-disclosure__text">
+                {analysisAd.isReady
+                  ? '아래 버튼을 누르면 리워드 광고가 먼저 표시되고, 광고 시청 후 자동 판정이 시작돼요.'
+                  : isAnalysisAdPreparing
+                    ? '리워드 광고를 준비하고 있어요. 준비가 끝나면 광고 시청 후 자동 판정을 시작할 수 있어요.'
+                    : '현재 리워드 광고를 표시할 수 없어 광고 없이 자동 판정을 시작해요.'}
+              </p>
+            </div>
+          ) : null}
           <button
             type="button"
             className="primary-action"
             onClick={() => void handleAnalyzeAssist()}
-            disabled={loading}
+            disabled={loading || isAnalysisAdPreparing}
           >
-            {loading ? '보조 데이터 불러오는 중...' : 'AI + 섹터 기반으로 자동 판정'}
+            {loading
+              ? '보조 데이터 불러오는 중...'
+              : isAnalysisAdPreparing
+                ? '광고 준비 중...'
+                : analysisActionLabel}
           </button>
-          {analysisAd.enabled ? (
-            <p className="helper-text helper-text--tight">
-              AI 자동 판정 실행 시 리워드 광고가 표시될 수 있습니다.
-            </p>
-          ) : null}
         </div>
 
         {error ? <div className="state-box state-box--error">{error}</div> : null}

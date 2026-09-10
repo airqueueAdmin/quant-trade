@@ -245,8 +245,8 @@ export function AnalysisPage() {
     let usedAdFreeReward = false
 
     try {
-      usedAdFreeReward = analysisAd.isReady && claimAdFreeAnalysisReward()
-      if (!usedAdFreeReward) {
+      usedAdFreeReward = adFreeRewards.balance > 0 && claimAdFreeAnalysisReward()
+      if (!usedAdFreeReward && analysisAd.isReady) {
         analysisAd.showAd()
       }
 
@@ -282,6 +282,15 @@ export function AnalysisPage() {
   }
 
   const tone = scoreTone(result?.sentiment_score ?? 50)
+  const hasAdFreeReward = adFreeRewards.balance > 0
+  const isAnalysisAdPreparing = analysisAd.enabled
+    && !hasAdFreeReward
+    && analysisAd.status === 'loading'
+  const analysisActionLabel = hasAdFreeReward
+    ? '광고권 사용하고 AI 분석 실행'
+    : analysisAd.isReady
+      ? '광고 보고 AI 분석 실행'
+      : 'AI 분석 실행'
 
   return (
     <main className="page-shell">
@@ -433,21 +442,29 @@ export function AnalysisPage() {
               <p className="helper-text helper-text--tight">{marketHelpText(market)}</p>
             </div>
 
+            {analysisAd.enabled && !hasAdFreeReward ? (
+              <div className="ad-disclosure" role="note">
+                <p className="ad-disclosure__eyebrow">광고 안내</p>
+                <p className="ad-disclosure__text">
+                  {analysisAd.isReady
+                    ? '아래 버튼을 누르면 리워드 광고가 먼저 표시되고, 광고 시청 후 AI 분석이 시작돼요.'
+                    : isAnalysisAdPreparing
+                      ? '리워드 광고를 준비하고 있어요. 준비가 끝나면 광고 시청 후 AI 분석을 시작할 수 있어요.'
+                      : '현재 리워드 광고를 표시할 수 없어 광고 없이 AI 분석을 시작해요.'}
+                </p>
+              </div>
+            ) : null}
             <button
               type="button"
               className="primary-action"
               onClick={() => void handleAnalyze()}
-              disabled={analysisLoading}
+              disabled={analysisLoading || isAnalysisAdPreparing}
             >
-              {analysisLoading ? 'AI 분석 중...' : 'AI 분석 실행'}
+              {analysisLoading ? 'AI 분석 중...' : isAnalysisAdPreparing ? '광고 준비 중...' : analysisActionLabel}
             </button>
-            {adFreeRewards.balance > 0 ? (
+            {hasAdFreeReward ? (
               <p className="helper-text helper-text--tight analysis-reward-status">
                 광고 없는 AI 분석권 <strong>{adFreeRewards.balance}개</strong> 보유 · 광고가 표시될 분석에서 자동으로 사용돼요.
-              </p>
-            ) : analysisAd.enabled ? (
-              <p className="helper-text helper-text--tight">
-                AI 분석 실행 시 리워드 광고가 표시될 수 있습니다.
               </p>
             ) : null}
           </div>

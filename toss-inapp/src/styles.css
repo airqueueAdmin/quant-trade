@@ -1752,6 +1752,29 @@ select {
     linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(255, 248, 235, 0.94) 100%);
 }
 
+.ad-disclosure {
+  margin: 16px 0 10px;
+  padding: 12px 14px;
+  border: 1px solid rgba(245, 159, 0, 0.32);
+  border-radius: 14px;
+  background: #fff8eb;
+}
+
+.ad-disclosure__eyebrow {
+  margin: 0;
+  color: #9a6500;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.ad-disclosure__text {
+  margin: 5px 0 0;
+  color: #604d2a;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .rewarded-ad-card__action {
   width: 100%;
   margin-top: 18px;
