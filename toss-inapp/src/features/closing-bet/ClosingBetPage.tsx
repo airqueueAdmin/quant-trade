@@ -28,6 +28,12 @@ import { useWatchlist } from '../../shared/watchlist/useWatchlist'
 
 type MarketOption = Extract<Market, 'krx' | 'us'>
 
+type PendingAdAnalysis = {
+  ticker: string
+  market: MarketOption
+  krxExchange: KrxExchange
+}
+
 const MARKET_OPTIONS: Array<{ value: MarketOption; label: string }> = [
   { value: 'krx', label: '국내주식' },
   { value: 'us', label: '미국주식' },
@@ -523,6 +529,7 @@ function recentStockWindow() {
 
 export function ClosingBetPage() {
   const analysisAd = useFullScreenAd(env.ads.rewardedAdGroupId)
+  const [pendingAdAnalysis, setPendingAdAnalysis] = useState<PendingAdAnalysis | null>(null)
   const { items: watchlist } = useWatchlist()
   const [session, setSession] = useState<AppSession | null>(() => readStoredSession())
   const [market, setMarket] = useState<MarketOption>('krx')
@@ -838,65 +845,100 @@ export function ClosingBetPage() {
     setSearchError(null)
   }
 
-  async function handleAnalyzeAssist() {
+  function executeAnalyzeAssist(
+    request: PendingAdAnalysis,
+    shouldShowAd: boolean,
+  ) {
+    const runAnalysisRequest = async () => {
+      setLoading(true)
+      setError(null)
+      resetAnalysis()
+
+      try {
+        const { startDate, endDate } = recentStockWindow()
+        const [quoteResult, sentimentResult, sectorResult, stockResult] = await Promise.all([
+          apiClient.quote(request.ticker, request.market, request.krxExchange),
+          apiClient.sentiment(request.ticker, request.market, request.krxExchange),
+          apiClient.marketSectors(request.market),
+          apiClient.stockData(request.ticker, startDate, endDate, request.market, request.krxExchange),
+        ])
+
+        const matchedSector = findSectorMatch(
+          sectorResult,
+          quoteResult.resolved_ticker || request.ticker,
+        )
+
+        setQuote(quoteResult)
+        setSentiment(sentimentResult)
+        setSectorSnapshot(sectorResult)
+        setResolvedSector(matchedSector)
+        setStockRows(stockResult.rows)
+        setScenario(deriveMarketCloseScenario(stockResult.rows, sentimentResult))
+        setScores({
+          sectorStrength: deriveSectorStrength(matchedSector, sectorResult),
+          closeStrength:
+            stockResult.rows.length > 0
+              ? deriveCloseStrengthFromRows(stockResult.rows)
+              : deriveCloseStrength(quoteResult),
+          volumePersistence: deriveVolumePersistence(matchedSector, quoteResult, stockResult.rows),
+          leaderStatus: deriveLeaderStatus(matchedSector, sectorResult, quoteResult.resolved_ticker || request.ticker),
+          newsFollowThrough: deriveNewsFollowThrough(sentimentResult),
+          tomorrowCatalyst: deriveTomorrowCatalyst(sentimentResult),
+          riskControl: deriveRiskControl(quoteResult, matchedSector, sentimentResult, stockResult.rows),
+        })
+        setCurrentStep(1)
+        recordDailyRoutineCompletion('/closing-bet')
+        trackGrowthEvent('closing_bet_evaluated', {
+          market: request.market,
+          krx_exchange: request.krxExchange,
+          history_row_count: stockResult.rows.length,
+        })
+      } catch (caughtError) {
+        setError(friendlyApiError(caughtError, '종가베팅 보조 데이터를 불러오지 못했습니다.'))
+        resetAnalysis()
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    if (shouldShowAd) {
+      const didRequestAd = analysisAd.showAd({
+        onDismissed: () => void runAnalysisRequest(),
+        onFailedToShow: () => void runAnalysisRequest(),
+      })
+      if (!didRequestAd) {
+        void runAnalysisRequest()
+      }
+      return
+    }
+
+    void runAnalysisRequest()
+  }
+
+  function handleAnalyzeAssist() {
     const normalizedTicker = normalizeTicker(ticker, market)
     if (!normalizedTicker) {
       setError('종목을 입력한 뒤 분석 보조를 실행하세요.')
       return
     }
 
-    if (analysisAd.isReady) {
-      analysisAd.showAd()
+    const request = { ticker: normalizedTicker, market, krxExchange }
+    if (analysisAd.enabled && analysisAd.isReady) {
+      setPendingAdAnalysis(request)
+      return
     }
-    setLoading(true)
-    setError(null)
-    resetAnalysis()
 
-    try {
-      const { startDate, endDate } = recentStockWindow()
-      const [quoteResult, sentimentResult, sectorResult, stockResult] = await Promise.all([
-        apiClient.quote(normalizedTicker, market, krxExchange),
-        apiClient.sentiment(normalizedTicker, market, krxExchange),
-        apiClient.marketSectors(market),
-        apiClient.stockData(normalizedTicker, startDate, endDate, market, krxExchange),
-      ])
+    executeAnalyzeAssist(request, false)
+  }
 
-      const matchedSector = findSectorMatch(
-        sectorResult,
-        quoteResult.resolved_ticker || normalizedTicker,
-      )
-
-      setQuote(quoteResult)
-      setSentiment(sentimentResult)
-      setSectorSnapshot(sectorResult)
-      setResolvedSector(matchedSector)
-      setStockRows(stockResult.rows)
-      setScenario(deriveMarketCloseScenario(stockResult.rows, sentimentResult))
-      setScores({
-        sectorStrength: deriveSectorStrength(matchedSector, sectorResult),
-        closeStrength:
-          stockResult.rows.length > 0
-            ? deriveCloseStrengthFromRows(stockResult.rows)
-            : deriveCloseStrength(quoteResult),
-        volumePersistence: deriveVolumePersistence(matchedSector, quoteResult, stockResult.rows),
-        leaderStatus: deriveLeaderStatus(matchedSector, sectorResult, quoteResult.resolved_ticker || normalizedTicker),
-        newsFollowThrough: deriveNewsFollowThrough(sentimentResult),
-        tomorrowCatalyst: deriveTomorrowCatalyst(sentimentResult),
-        riskControl: deriveRiskControl(quoteResult, matchedSector, sentimentResult, stockResult.rows),
-      })
-      setCurrentStep(1)
-      recordDailyRoutineCompletion('/closing-bet')
-      trackGrowthEvent('closing_bet_evaluated', {
-        market,
-        krx_exchange: krxExchange,
-        history_row_count: stockResult.rows.length,
-      })
-    } catch (caughtError) {
-      setError(friendlyApiError(caughtError, '종가베팅 보조 데이터를 불러오지 못했습니다.'))
-      resetAnalysis()
-    } finally {
-      setLoading(false)
+  function handleConfirmAdAnalysis() {
+    if (!pendingAdAnalysis) {
+      return
     }
+
+    const request = pendingAdAnalysis
+    setPendingAdAnalysis(null)
+    executeAnalyzeAssist(request, true)
   }
 
   async function handleSaveNotification() {
@@ -1203,25 +1245,53 @@ export function ClosingBetPage() {
               <p className="ad-disclosure__eyebrow">광고 안내</p>
               <p className="ad-disclosure__text">
                 {analysisAd.isReady
-                  ? '아래 버튼을 누르면 리워드 광고가 먼저 표시되고, 광고 시청 후 자동 판정이 시작돼요.'
+                  ? '판정을 시작하면 광고 안내를 먼저 확인하게 됩니다. 확인 후 광고가 재생되고, 광고가 끝나면 자동 판정이 시작돼요.'
                   : isAnalysisAdPreparing
                     ? '리워드 광고를 준비하고 있어요. 준비가 끝나면 광고 시청 후 자동 판정을 시작할 수 있어요.'
                     : '현재 리워드 광고를 표시할 수 없어 광고 없이 자동 판정을 시작해요.'}
               </p>
             </div>
           ) : null}
-          <button
-            type="button"
-            className="primary-action"
-            onClick={() => void handleAnalyzeAssist()}
-            disabled={loading || isAnalysisAdPreparing}
-          >
-            {loading
-              ? '보조 데이터 불러오는 중...'
-              : isAnalysisAdPreparing
-                ? '광고 준비 중...'
-                : analysisActionLabel}
-          </button>
+          {pendingAdAnalysis ? (
+            <div className="ad-confirmation" role="group" aria-labelledby="closing-bet-ad-confirmation-title">
+              <p className="ad-confirmation__eyebrow">광고 재생 전 확인</p>
+              <h3 id="closing-bet-ad-confirmation-title" className="ad-confirmation__title">
+                광고를 본 뒤 자동 판정을 시작할까요?
+              </h3>
+              <p className="ad-confirmation__text">
+                다음 단계에서 리워드 광고가 재생됩니다. 광고 시청을 마치면 선택한 종목의 자동 판정을 시작해요.
+              </p>
+              <div className="ad-confirmation__actions">
+                <button
+                  type="button"
+                  className="primary-action"
+                  onClick={handleConfirmAdAnalysis}
+                >
+                  광고 시청 후 자동 판정 시작
+                </button>
+                <button
+                  type="button"
+                  className="secondary-action"
+                  onClick={() => setPendingAdAnalysis(null)}
+                >
+                  취소
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              type="button"
+              className="primary-action"
+              onClick={() => void handleAnalyzeAssist()}
+              disabled={loading || isAnalysisAdPreparing}
+            >
+              {loading
+                ? '보조 데이터 불러오는 중...'
+                : isAnalysisAdPreparing
+                  ? '광고 준비 중...'
+                  : analysisActionLabel}
+            </button>
+          )}
         </div>
 
         {error ? <div className="state-box state-box--error">{error}</div> : null}

@@ -26,6 +26,12 @@ const MARKET_OPTIONS: Array<{ value: Market; label: string }> = [
   { value: 'krx', label: '국내주식' },
 ] as const
 
+type PendingAdAnalysis = {
+  ticker: string
+  market: Market
+  krxExchange: KrxExchange
+}
+
 const KRX_EXCHANGE_OPTIONS: Array<{ value: KrxExchange; label: string }> = [
   { value: 'auto', label: '자동 판별' },
   { value: 'kospi', label: 'KOSPI' },
@@ -126,6 +132,7 @@ export function AnalysisPage() {
   const analysisAd = useFullScreenAd(env.ads.rewardedAdGroupId)
   const adFreeRewards = useAdFreeAnalysisRewards()
   const analysisInFlightRef = useRef(false)
+  const [pendingAdAnalysis, setPendingAdAnalysis] = useState<PendingAdAnalysis | null>(null)
   const { items: watchlist } = useWatchlist()
   const [market, setMarket] = useState<Market>(initialMarket)
   const [krxExchange, setKrxExchange] = useState<KrxExchange>(initialKrxExchange)
@@ -229,12 +236,10 @@ export function AnalysisPage() {
     setResult(null)
   }
 
-  async function handleAnalyze() {
-    const normalizedTicker = ticker.trim()
-    if (!normalizedTicker) {
-      setAnalysisError('분석할 종목을 입력하세요.')
-      return
-    }
+  function executeAnalysis(
+    request: PendingAdAnalysis,
+    shouldShowAd: boolean,
+  ) {
     if (analysisInFlightRef.current) {
       return
     }
@@ -244,41 +249,88 @@ export function AnalysisPage() {
     setAnalysisError(null)
     let usedAdFreeReward = false
 
-    try {
-      usedAdFreeReward = adFreeRewards.balance > 0 && claimAdFreeAnalysisReward()
-      if (!usedAdFreeReward && analysisAd.isReady) {
-        analysisAd.showAd()
-      }
+    const runAnalysisRequest = async () => {
+      try {
+        usedAdFreeReward = !shouldShowAd
+          && adFreeRewards.balance > 0
+          && claimAdFreeAnalysisReward()
 
-      const response = await apiClient.sentiment(normalizedTicker, market, krxExchange)
-      setResult(response)
-      setCurrentStep(2)
-      recordDailyRoutineCompletion('/ai-analysis')
-      trackGrowthEvent('ai_analysis_completed', {
-        market,
-        krx_exchange: krxExchange,
-        sentiment_score: response.sentiment_score,
-        used_ad_free_reward: usedAdFreeReward,
-      })
-      trackReferralActivation('ai_analysis_completed', {
-        market,
-      })
-    } catch (caughtError) {
-      if (usedAdFreeReward) {
-        refundAdFreeAnalysisReward()
+        const response = await apiClient.sentiment(
+          request.ticker,
+          request.market,
+          request.krxExchange,
+        )
+        setResult(response)
+        setCurrentStep(2)
+        recordDailyRoutineCompletion('/ai-analysis')
+        trackGrowthEvent('ai_analysis_completed', {
+          market: request.market,
+          krx_exchange: request.krxExchange,
+          sentiment_score: response.sentiment_score,
+          used_ad_free_reward: usedAdFreeReward,
+        })
+        trackReferralActivation('ai_analysis_completed', {
+          market: request.market,
+        })
+      } catch (caughtError) {
+        if (usedAdFreeReward) {
+          refundAdFreeAnalysisReward()
+        }
+        if (caughtError instanceof ApiError) {
+          setAnalysisError(caughtError.detail)
+        } else if (caughtError instanceof Error) {
+          setAnalysisError(caughtError.message)
+        } else {
+          setAnalysisError('AI 분석을 불러오지 못했습니다.')
+        }
+        setResult(null)
+      } finally {
+        analysisInFlightRef.current = false
+        setAnalysisLoading(false)
       }
-      if (caughtError instanceof ApiError) {
-        setAnalysisError(caughtError.detail)
-      } else if (caughtError instanceof Error) {
-        setAnalysisError(caughtError.message)
-      } else {
-        setAnalysisError('AI 분석을 불러오지 못했습니다.')
-      }
-      setResult(null)
-    } finally {
-      analysisInFlightRef.current = false
-      setAnalysisLoading(false)
     }
+
+    if (shouldShowAd) {
+      const didRequestAd = analysisAd.showAd({
+        onDismissed: () => void runAnalysisRequest(),
+        onFailedToShow: () => void runAnalysisRequest(),
+      })
+      if (!didRequestAd) {
+        void runAnalysisRequest()
+      }
+      return
+    }
+
+    void runAnalysisRequest()
+  }
+
+  function handleAnalyze() {
+    const normalizedTicker = ticker.trim()
+    if (!normalizedTicker) {
+      setAnalysisError('분석할 종목을 입력하세요.')
+      return
+    }
+    if (analysisInFlightRef.current) {
+      return
+    }
+
+    const request = { ticker: normalizedTicker, market, krxExchange }
+    if (analysisAd.enabled && adFreeRewards.balance === 0 && analysisAd.isReady) {
+      setPendingAdAnalysis(request)
+      return
+    }
+
+    executeAnalysis(request, false)
+  }
+
+  function handleConfirmAdAnalysis() {
+    if (!pendingAdAnalysis) {
+      return
+    }
+
+    const request = pendingAdAnalysis
+    setPendingAdAnalysis(null)
+    executeAnalysis(request, true)
   }
 
   const tone = scoreTone(result?.sentiment_score ?? 50)
@@ -447,21 +499,49 @@ export function AnalysisPage() {
                 <p className="ad-disclosure__eyebrow">광고 안내</p>
                 <p className="ad-disclosure__text">
                   {analysisAd.isReady
-                    ? '아래 버튼을 누르면 리워드 광고가 먼저 표시되고, 광고 시청 후 AI 분석이 시작돼요.'
+                    ? '분석을 시작하면 광고 안내를 먼저 확인하게 됩니다. 확인 후 광고가 재생되고, 광고가 끝나면 AI 분석이 시작돼요.'
                     : isAnalysisAdPreparing
                       ? '리워드 광고를 준비하고 있어요. 준비가 끝나면 광고 시청 후 AI 분석을 시작할 수 있어요.'
                       : '현재 리워드 광고를 표시할 수 없어 광고 없이 AI 분석을 시작해요.'}
                 </p>
               </div>
             ) : null}
-            <button
-              type="button"
-              className="primary-action"
-              onClick={() => void handleAnalyze()}
-              disabled={analysisLoading || isAnalysisAdPreparing}
-            >
-              {analysisLoading ? 'AI 분석 중...' : isAnalysisAdPreparing ? '광고 준비 중...' : analysisActionLabel}
-            </button>
+            {pendingAdAnalysis ? (
+              <div className="ad-confirmation" role="group" aria-labelledby="analysis-ad-confirmation-title">
+                <p className="ad-confirmation__eyebrow">광고 재생 전 확인</p>
+                <h3 id="analysis-ad-confirmation-title" className="ad-confirmation__title">
+                  광고를 본 뒤 AI 분석을 시작할까요?
+                </h3>
+                <p className="ad-confirmation__text">
+                  다음 단계에서 리워드 광고가 재생됩니다. 광고 시청을 마치면 선택한 종목의 AI 분석을 시작해요.
+                </p>
+                <div className="ad-confirmation__actions">
+                  <button
+                    type="button"
+                    className="primary-action"
+                    onClick={handleConfirmAdAnalysis}
+                  >
+                    광고 시청 후 AI 분석 시작
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-action"
+                    onClick={() => setPendingAdAnalysis(null)}
+                  >
+                    취소
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                type="button"
+                className="primary-action"
+                onClick={() => void handleAnalyze()}
+                disabled={analysisLoading || isAnalysisAdPreparing}
+              >
+                {analysisLoading ? 'AI 분석 중...' : isAnalysisAdPreparing ? '광고 준비 중...' : analysisActionLabel}
+              </button>
+            )}
             {hasAdFreeReward ? (
               <p className="helper-text helper-text--tight analysis-reward-status">
                 광고 없는 AI 분석권 <strong>{adFreeRewards.balance}개</strong> 보유 · 광고가 표시될 분석에서 자동으로 사용돼요.
