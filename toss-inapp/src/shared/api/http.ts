@@ -18,10 +18,11 @@ type RequestOptions = {
   body?: unknown
   signal?: AbortSignal
   headers?: Record<string, string>
+  baseUrl?: string
 }
 
-function buildUrl(path: string, params?: RequestOptions['params']) {
-  const url = new URL(path, ensureTrailingSlash(env.backendUrl))
+function buildUrl(path: string, params?: RequestOptions['params'], baseUrl = env.backendUrl) {
+  const url = new URL(path, ensureTrailingSlash(baseUrl))
   if (params) {
     Object.entries(params).forEach(([key, value]) => {
       if (value === undefined || value === null || value === '') {
@@ -50,7 +51,7 @@ async function parseErrorDetail(response: Response) {
 }
 
 export async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const response = await fetch(buildUrl(path, options.params), {
+  const response = await fetch(buildUrl(path, options.params, options.baseUrl), {
     method: options.method ?? 'GET',
     headers: {
       'Content-Type': 'application/json',

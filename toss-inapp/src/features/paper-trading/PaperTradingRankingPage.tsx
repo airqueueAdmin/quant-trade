@@ -145,7 +145,12 @@ export function PaperTradingRankingPage() {
       try {
         let anonymousKeyResult: Awaited<ReturnType<typeof getAnonymousKey>>
         try {
-          anonymousKeyResult = await getAnonymousKey()
+          anonymousKeyResult = await Promise.race([
+            getAnonymousKey(),
+            new Promise<undefined>((resolve) => {
+              window.setTimeout(() => resolve(undefined), 3000)
+            }),
+          ])
         } catch {
           anonymousKeyResult = undefined
         }

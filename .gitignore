@@ -9,6 +9,7 @@ __pycache__/
 !toss-inapp/**/*.md
 !toss-inapp/*.md
 PORTFOLIO.md
+!RESUME.md
 
 # Secrets and configuration files
 .env
@@ -24,3 +25,8 @@ dist/
 build/
 *.egg-info/
 backend/.cache/
+.npm-cache/
+*.log
+*.tsbuildinfo
+toss-inapp/vite.config.d.ts
+toss-inapp/vite.config.js
