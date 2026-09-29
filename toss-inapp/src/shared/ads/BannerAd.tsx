@@ -118,8 +118,12 @@ export function BannerAd({ adGroupId }: BannerAdProps) {
   return (
     <aside
       className={`banner-ad banner-ad--${status}`}
-      aria-label="광고"
+      aria-label="광고 영역"
     >
+      <div className="banner-ad__notice" role="note">
+        <span className="banner-ad__notice-label">광고</span>
+        <span>아래에 광고가 표시될 수 있어요.</span>
+      </div>
       <div ref={containerRef} className="banner-ad__slot" />
     </aside>
   )

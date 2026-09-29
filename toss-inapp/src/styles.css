@@ -250,6 +250,24 @@ select {
   background: #ffffff;
 }
 
+.banner-ad__notice {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 30px;
+  padding: 7px 16px 6px;
+  color: #6b7684;
+  font-size: 11px;
+  line-height: 1.4;
+  letter-spacing: -0.01em;
+}
+
+.banner-ad__notice-label {
+  flex: 0 0 auto;
+  color: #8b95a1;
+  font-weight: 700;
+}
+
 .banner-ad__slot {
   width: 100%;
 }
