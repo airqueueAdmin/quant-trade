@@ -200,6 +200,16 @@ function metricLabel(metric: StrategyMetric) {
   return METRIC_OPTIONS.find((item) => item.value === metric)?.label ?? metric
 }
 
+function metricDescription(metric: StrategyMetric) {
+  const descriptions: Record<StrategyMetric, string> = {
+    sharpe_ratio: '변동성 대비 수익을 비교하는 지표입니다. 높을수록 같은 위험에서 수익이 좋았다는 뜻입니다.',
+    total_return_pct: '시작 자산 대비 최종 자산의 변화율입니다.',
+    cagr_pct: '결과를 연간 기준으로 환산한 복리 수익률입니다.',
+    sortino_ratio: '하락 변동성만 반영해 수익을 비교하는 지표입니다. 높을수록 좋습니다.',
+  }
+  return descriptions[metric]
+}
+
 function parameterLabel(name: string) {
   const labels: Record<string, string> = {
     short_window: '단기 평균 기간',
@@ -1219,6 +1229,9 @@ export function StrategySimulationPage() {
       {backtestResult ? (
         <>
           <section className="content-panel">
+            <div className="state-box" role="status">
+              백테스트가 완료됐어요. 전략 성과와 단순 보유 결과를 비교해보세요.
+            </div>
             <p className="content-panel__eyebrow">백테스트 결과</p>
             <h3 className="content-panel__title">
               {backtestResult.resolved_ticker} 백테스트 결과
@@ -1307,6 +1320,20 @@ export function StrategySimulationPage() {
               </article>
             </div>
 
+            <div className="content-panel content-panel--nested">
+              <p className="content-panel__eyebrow">지표 해석</p>
+              <ul className="bullet-list">
+                <li><strong>총수익률</strong>은 시작 자산 대비 최종 자산이 얼마나 변했는지 보여줍니다.</li>
+                <li><strong>CAGR</strong>은 결과를 연간 기준으로 환산한 복리 수익률입니다.</li>
+                <li><strong>샤프 지수</strong>는 변동성 대비 수익을 보여주며, 높을수록 같은 위험에서 수익이 좋았다는 뜻입니다.</li>
+                <li><strong>연환산 변동성</strong>은 자산 가치가 얼마나 크게 흔들렸는지, <strong>최대 낙폭</strong>은 고점에서 가장 크게 내려간 폭을 뜻합니다.</li>
+                <li><strong>승률</strong>은 수익으로 끝난 매매의 비율이라서, 전체 수익률과 함께 확인해야 합니다.</li>
+              </ul>
+              <p className="helper-text helper-text--tight">
+                과거 데이터 결과이며 미래 수익을 보장하지 않습니다. 수수료·세금·체결 차이는 실제 시장과 다를 수 있어요.
+              </p>
+            </div>
+
             <details className="content-panel content-panel--nested disclosure-panel">
               <summary>실행 파라미터 보기</summary>
               <p className="content-panel__eyebrow">실행 파라미터</p>
@@ -1353,12 +1380,18 @@ export function StrategySimulationPage() {
       {optimizationResult ? (
         <>
           <section className="content-panel">
+            <div className="state-box" role="status">
+              전략 최적화가 완료됐어요. 최적 파라미터와 비교 결과를 확인하세요.
+            </div>
             <p className="content-panel__eyebrow">전략 최적화 결과</p>
             <h3 className="content-panel__title">
               {optimizationResult.resolved_ticker} 최적 파라미터 탐색
             </h3>
             <p className="content-panel__description">
               {metricLabel(optimizationResult.metric_optimized)} 기준 최적 조합입니다.
+            </p>
+            <p className="helper-text helper-text--tight">
+              {metricDescription(optimizationResult.metric_optimized)} 과거 결과를 기준으로 고른 조합이므로 미래 성과를 보장하지 않습니다.
             </p>
 
             <div className="simulation-metric-grid">

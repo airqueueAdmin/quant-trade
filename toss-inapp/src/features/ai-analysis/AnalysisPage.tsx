@@ -554,6 +554,9 @@ export function AnalysisPage() {
         <section className="content-panel">
           {result ? (
             <>
+              <div className="state-box" role="status">
+                AI 분석이 완료됐어요. 아래 감성 점수와 요약을 확인하세요.
+              </div>
               <div className={`sentiment-card sentiment-card--${tone}`}>
                 <div className="sentiment-card__top">
                   <div>

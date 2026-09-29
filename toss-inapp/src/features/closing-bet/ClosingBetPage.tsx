@@ -554,7 +554,6 @@ export function ClosingBetPage() {
   const [notificationLoading, setNotificationLoading] = useState(false)
   const [notificationError, setNotificationError] = useState<string | null>(null)
   const [notificationMessage, setNotificationMessage] = useState<string | null>(null)
-  const [notificationChannel, setNotificationChannel] = useState<ClosingBetNotificationChannel>('toss_inapp')
   const [notificationDestination, setNotificationDestination] = useState('')
   const [notificationThreshold, setNotificationThreshold] = useState('0')
   const [tossUserKey, setTossUserKey] = useState<string | null>(null)
@@ -652,9 +651,6 @@ export function ClosingBetPage() {
   }
 
   async function ensureNotificationAgreement() {
-    if (notificationChannel !== 'toss_inapp') {
-      return
-    }
     if (notificationAgreementReady) {
       return
     }
@@ -956,7 +952,7 @@ export function ClosingBetPage() {
       return
     }
     if (!normalizedDestination) {
-      setNotificationError(notificationChannel === 'email' ? '이메일 주소를 입력하세요.' : '알림 이름을 입력하세요.')
+      setNotificationError('알림 이름을 입력하세요.')
       return
     }
     if (!Number.isFinite(threshold) || threshold < 0 || threshold > 100) {
@@ -969,16 +965,13 @@ export function ClosingBetPage() {
     setNotificationMessage(null)
 
     try {
-      let nextTossUserKey: string | undefined
-      if (notificationChannel === 'toss_inapp') {
-        nextTossUserKey = await ensureTossRecipientKey()
-        await ensureNotificationAgreement()
-      }
+      const nextTossUserKey = await ensureTossRecipientKey()
+      await ensureNotificationAgreement()
       const response = await apiClient.closingBetNotificationUpsert(session.sessionToken, {
         ticker: quote?.resolved_ticker || normalizedTicker,
         market,
         krx_exchange: market === 'krx' ? krxExchange : 'auto',
-        channel: notificationChannel,
+        channel: 'toss_inapp',
         destination: normalizedDestination,
         toss_user_key: nextTossUserKey,
         threshold_score: Math.round(threshold),
@@ -991,7 +984,7 @@ export function ClosingBetPage() {
       await refreshNotificationCenter(session)
       setNotificationMessage('알림을 저장했습니다.')
       trackGrowthEvent('closing_bet_notification_saved', {
-        channel: notificationChannel,
+        channel: 'toss_inapp',
         market,
         threshold_score: Math.round(threshold),
       })
@@ -1376,34 +1369,20 @@ export function ClosingBetPage() {
 
           <div className="field-grid field-grid--single-when-narrow">
             <div>
-              <label className="field-label" htmlFor="closing-bet-notification-channel">
-                알림 채널
-              </label>
-              <select
-                id="closing-bet-notification-channel"
-                className="text-field"
-                value={notificationChannel}
-                onChange={(event) => setNotificationChannel(event.target.value as ClosingBetNotificationChannel)}
-              >
-                <option value="toss_inapp">토스 앱 알림</option>
-                <option value="email">이메일</option>
-              </select>
+              <span className="field-label">알림 채널</span>
+              <p className="helper-text helper-text--tight">토스 앱 알림으로만 발송합니다.</p>
             </div>
 
             <div>
               <label className="field-label" htmlFor="closing-bet-notification-destination">
-                {notificationChannel === 'email' ? '받을 이메일' : '알림 이름'}
+                알림 이름
               </label>
               <input
                 id="closing-bet-notification-destination"
                 className="text-field"
                 value={notificationDestination}
                 onChange={(event) => setNotificationDestination(event.target.value)}
-                placeholder={
-                  notificationChannel === 'email'
-                    ? 'me@example.com'
-                    : '예: 삼성전자 종가 알림'
-                }
+                placeholder="예: 삼성전자 종가 알림"
               />
             </div>
           </div>
@@ -1427,7 +1406,7 @@ export function ClosingBetPage() {
                 type="button"
                 className="primary-action"
                 onClick={() => void handleSaveNotification()}
-                disabled={savingNotification || (notificationChannel === 'toss_inapp' && tossSmartMessageConfigured === false)}
+                disabled={savingNotification || tossSmartMessageConfigured === false}
               >
                 {savingNotification ? '저장 중...' : '알림 저장'}
               </button>
@@ -1514,6 +1493,9 @@ export function ClosingBetPage() {
 
       {currentStep === 1 ? (
       <>
+      <div className="state-box" role="status">
+        자동 판정이 완료됐어요. 총점과 제외 신호를 확인하세요.
+      </div>
       <details className="content-panel disclosure-panel">
         <summary>자동 판정 근거 8개 보기</summary>
         <p className="content-panel__eyebrow">자동 점검 항목</p>
